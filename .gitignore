@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+outputs/
+uploads/
+manim_scenes/
+.venv/
+venv/
+media/
+*.mp4
+*.mp3
