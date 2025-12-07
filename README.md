@@ -35,6 +35,31 @@ cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
+5. Open http://localhost:8000 in your browser
+
+## Deploy to Vercel
+
+1. Install Vercel CLI:
+```bash
+npm i -g vercel
+```
+
+2. Add your environment variables in Vercel:
+```bash
+vercel secrets add mistral_api_key "your-key-here"
+vercel secrets add anthropic_api_key "your-key-here"
+```
+
+3. Deploy:
+```bash
+vercel
+```
+
+**Note:** Vercel has limitations for serverless functions:
+- 10s timeout on free tier (60s on Pro)
+- No persistent filesystem (uploads don't persist between requests)
+- Best suited for demo/testing purposes
+
 ## API Endpoints
 
 - `GET /health` - Health check
@@ -69,43 +94,29 @@ curl http://localhost:8000/api/markdown/{job_id}
 
 ```
 paper-to-video/
+├── api/
+│   └── index.py                # Vercel serverless entry point
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                 # FastAPI entry point
+│   ├── main.py                 # FastAPI application
 │   ├── config.py               # Environment variables
 │   ├── models/
-│   │   ├── __init__.py
 │   │   └── schemas.py          # Pydantic models
 │   ├── services/
-│   │   ├── __init__.py
-│   │   ├── ocr_service.py      # Mistral OCR
-│   │   ├── planning_service.py # AI presentation planning
-│   │   ├── manim_service.py    # Manim code gen + rendering
-│   │   ├── tts_service.py      # ElevenLabs
-│   │   └── video_service.py    # Shotstack composition
-│   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── planner_agent.py    # Presentation planner
-│   │   └── manim_agent.py      # Manim code generator
-│   ├── prompts/
-│   │   ├── planner_system.txt
-│   │   ├── manim_system.txt
-│   │   └── simplifier_system.txt
+│   │   └── ocr_service.py      # Mistral OCR
+│   ├── agents/                 # (Phase 2+)
+│   ├── prompts/                # (Phase 2+)
 │   └── utils/
-│       ├── __init__.py
-│       ├── file_utils.py
-│       └── manim_validator.py  # Validate manim code
-├── manim_scenes/               # Generated manim files
-├── outputs/
-│   ├── videos/                 # Rendered manim clips
-│   ├── audio/                  # ElevenLabs audio clips
-│   └── final/                  # Shotstack output
-├── uploads/                    # Uploaded PDFs
+├── static/
+│   ├── index.html              # Frontend UI
+│   ├── style.css               # Styles
+│   └── app.js                  # Frontend JavaScript
 ├── tests/
+│   └── test_ocr.py
+├── vercel.json                 # Vercel deployment config
 ├── requirements.txt
 ├── .env.example
-├── .gitignore
-└── README.md
+└── .gitignore
 ```
 
 ## License
