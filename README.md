@@ -35,6 +35,33 @@ cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
+5. Open http://localhost:8000 in your browser
+
+## Deploy to Render
+
+1. Go to [render.com](https://render.com) and sign up/login
+
+2. Click **New +** → **Web Service**
+
+3. Connect your GitHub repo
+
+4. Configure the service:
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+5. Add environment variables in the Render dashboard:
+   - `MISTRAL_API_KEY` - Your Mistral API key
+   - `ANTHROPIC_API_KEY` - Your Anthropic API key
+
+6. Click **Create Web Service**
+
+Your app will be live at `https://your-app-name.onrender.com`
+
+**Render advantages over Vercel:**
+- Longer timeouts (better for OCR processing)
+- Persistent filesystem during instance lifetime
+- Better suited for Python backends
+
 ## API Endpoints
 
 - `GET /health` - Health check
@@ -71,41 +98,25 @@ curl http://localhost:8000/api/markdown/{job_id}
 paper-to-video/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                 # FastAPI entry point
+│   ├── main.py                 # FastAPI application
 │   ├── config.py               # Environment variables
 │   ├── models/
-│   │   ├── __init__.py
 │   │   └── schemas.py          # Pydantic models
 │   ├── services/
-│   │   ├── __init__.py
-│   │   ├── ocr_service.py      # Mistral OCR
-│   │   ├── planning_service.py # AI presentation planning
-│   │   ├── manim_service.py    # Manim code gen + rendering
-│   │   ├── tts_service.py      # ElevenLabs
-│   │   └── video_service.py    # Shotstack composition
-│   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── planner_agent.py    # Presentation planner
-│   │   └── manim_agent.py      # Manim code generator
-│   ├── prompts/
-│   │   ├── planner_system.txt
-│   │   ├── manim_system.txt
-│   │   └── simplifier_system.txt
+│   │   └── ocr_service.py      # Mistral OCR
+│   ├── agents/                 # (Phase 2+)
+│   ├── prompts/                # (Phase 2+)
 │   └── utils/
-│       ├── __init__.py
-│       ├── file_utils.py
-│       └── manim_validator.py  # Validate manim code
-├── manim_scenes/               # Generated manim files
-├── outputs/
-│   ├── videos/                 # Rendered manim clips
-│   ├── audio/                  # ElevenLabs audio clips
-│   └── final/                  # Shotstack output
-├── uploads/                    # Uploaded PDFs
+├── static/
+│   ├── index.html              # Frontend UI
+│   ├── style.css               # Styles
+│   └── app.js                  # Frontend JavaScript
 ├── tests/
+│   └── test_ocr.py
+├── render.yaml                 # Render deployment config
 ├── requirements.txt
 ├── .env.example
-├── .gitignore
-└── README.md
+└── .gitignore
 ```
 
 ## License

@@ -4,6 +4,8 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.models.schemas import JobStatus
@@ -29,8 +31,19 @@ ocr_service = MistralOCRService(settings.MISTRAL_API_KEY)
 settings.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 settings.OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Mount static files
+static_dir = settings.BASE_DIR / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
 # In-memory job storage (replace with Redis in production)
 jobs: dict[str, JobStatus] = {}
+
+
+@app.get("/")
+async def root():
+    """Serve the frontend."""
+    return FileResponse(str(settings.BASE_DIR / "static" / "index.html"))
 
 
 @app.get("/health")

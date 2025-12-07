@@ -1,10 +1,11 @@
-from pydantic_settings import BaseSettings
 from pathlib import Path
+
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    MISTRAL_API_KEY: str
-    ANTHROPIC_API_KEY: str
+    MISTRAL_API_KEY: str = ""
+    ANTHROPIC_API_KEY: str = ""
     ELEVENLABS_API_KEY: str = ""
     SHOTSTACK_API_KEY: str = ""
     SHOTSTACK_ENV: str = "stage"
