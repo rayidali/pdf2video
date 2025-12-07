@@ -37,28 +37,30 @@ uvicorn app.main:app --reload
 
 5. Open http://localhost:8000 in your browser
 
-## Deploy to Vercel
+## Deploy to Render
 
-1. Install Vercel CLI:
-```bash
-npm i -g vercel
-```
+1. Go to [render.com](https://render.com) and sign up/login
 
-2. Add your environment variables in Vercel:
-```bash
-vercel secrets add mistral_api_key "your-key-here"
-vercel secrets add anthropic_api_key "your-key-here"
-```
+2. Click **New +** → **Web Service**
 
-3. Deploy:
-```bash
-vercel
-```
+3. Connect your GitHub repo
 
-**Note:** Vercel has limitations for serverless functions:
-- 10s timeout on free tier (60s on Pro)
-- No persistent filesystem (uploads don't persist between requests)
-- Best suited for demo/testing purposes
+4. Configure the service:
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+5. Add environment variables in the Render dashboard:
+   - `MISTRAL_API_KEY` - Your Mistral API key
+   - `ANTHROPIC_API_KEY` - Your Anthropic API key
+
+6. Click **Create Web Service**
+
+Your app will be live at `https://your-app-name.onrender.com`
+
+**Render advantages over Vercel:**
+- Longer timeouts (better for OCR processing)
+- Persistent filesystem during instance lifetime
+- Better suited for Python backends
 
 ## API Endpoints
 
@@ -94,8 +96,6 @@ curl http://localhost:8000/api/markdown/{job_id}
 
 ```
 paper-to-video/
-├── api/
-│   └── index.py                # Vercel serverless entry point
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                 # FastAPI application
@@ -113,7 +113,7 @@ paper-to-video/
 │   └── app.js                  # Frontend JavaScript
 ├── tests/
 │   └── test_ocr.py
-├── vercel.json                 # Vercel deployment config
+├── render.yaml                 # Render deployment config
 ├── requirements.txt
 ├── .env.example
 └── .gitignore
