@@ -23,7 +23,12 @@ let selectedFile = null;
 let currentJobId = null;
 
 // File Selection
-dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('click', (e) => {
+    // Only trigger if clicking the drop zone itself, not the label/button inside
+    if (e.target === dropZone || e.target.closest('.drop-zone-content') && !e.target.closest('label')) {
+        fileInput.click();
+    }
+});
 
 dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
