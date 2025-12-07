@@ -1,7 +1,6 @@
 import httpx
-import base64
 import logging
-import fitz  # PyMuPDF
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -10,102 +9,130 @@ class MistralOCRService:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.base_url = "https://api.mistral.ai/v1"
+        self.headers = {
+            "Authorization": f"Bearer {api_key}"
+        }
 
-    def _pdf_to_images(self, pdf_path: str) -> list[str]:
+    async def _upload_file(self, client: httpx.AsyncClient, pdf_path: str) -> str:
         """
-        Convert PDF pages to base64-encoded PNG images.
+        Step 1: Upload PDF to Mistral for OCR processing.
+        Returns the file ID.
         """
-        images = []
-        doc = fitz.open(pdf_path)
+        file_name = Path(pdf_path).name
 
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            # Render page to image (2x zoom for better quality)
-            mat = fitz.Matrix(2, 2)
-            pix = page.get_pixmap(matrix=mat)
-            img_bytes = pix.tobytes("png")
-            img_base64 = base64.standard_b64encode(img_bytes).decode("utf-8")
-            images.append(img_base64)
-            logger.info(f"Converted page {page_num + 1}/{len(doc)} to image")
+        with open(pdf_path, "rb") as f:
+            files = {
+                "file": (file_name, f, "application/pdf"),
+                "purpose": (None, "ocr")
+            }
+            response = await client.post(
+                f"{self.base_url}/files",
+                headers=self.headers,
+                files=files,
+                timeout=120.0
+            )
 
-        doc.close()
-        return images
+        if response.status_code != 200:
+            logger.error(f"File upload failed: {response.status_code} - {response.text}")
+            raise Exception(f"File upload failed: {response.status_code} - {response.text}")
 
-    async def _ocr_image(self, client: httpx.AsyncClient, img_base64: str, page_num: int, total_pages: int) -> str:
+        result = response.json()
+        file_id = result["id"]
+        logger.info(f"File uploaded successfully. ID: {file_id}")
+        return file_id
+
+    async def _get_signed_url(self, client: httpx.AsyncClient, file_id: str) -> str:
         """
-        OCR a single image using Mistral's vision model.
+        Step 2: Get a signed URL for the uploaded file.
         """
-        response = await client.post(
-            f"{self.base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "pixtral-12b-2409",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{img_base64}"
-                                }
-                            },
-                            {
-                                "type": "text",
-                                "text": f"""Extract all text from this image (page {page_num} of {total_pages} of a research paper) and convert it to well-structured markdown.
-
-Requirements:
-- Preserve all headings with proper markdown hierarchy (# ## ###)
-- Keep equations in LaTeX format wrapped in $ or $$
-- Preserve tables using markdown table syntax
-- Include figure captions as blockquotes
-- Maintain the logical flow and structure
-- Do NOT include any preamble like "Here is the extracted text" - just output the markdown directly"""
-                            }
-                        ]
-                    }
-                ],
-                "max_tokens": 4000
-            },
-            timeout=120.0
+        response = await client.get(
+            f"{self.base_url}/files/{file_id}/url",
+            headers=self.headers,
+            params={"expiry": 24},
+            timeout=30.0
         )
 
         if response.status_code != 200:
-            logger.error(f"Mistral API error on page {page_num}: {response.status_code} - {response.text}")
-            raise Exception(f"Mistral API error: {response.status_code} - {response.text}")
+            logger.error(f"Failed to get signed URL: {response.status_code} - {response.text}")
+            raise Exception(f"Failed to get signed URL: {response.status_code} - {response.text}")
 
         result = response.json()
-        return result["choices"][0]["message"]["content"]
+        signed_url = result["url"]
+        logger.info(f"Got signed URL for file {file_id}")
+        return signed_url
+
+    async def _run_ocr(self, client: httpx.AsyncClient, document_url: str) -> dict:
+        """
+        Step 3: Run OCR on the document using the signed URL.
+        """
+        response = await client.post(
+            f"{self.base_url}/ocr",
+            headers={
+                **self.headers,
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "mistral-ocr-latest",
+                "document": {
+                    "type": "document_url",
+                    "document_url": document_url
+                },
+                "include_image_base64": False  # Don't need images, just text
+            },
+            timeout=300.0  # OCR can take a while for long documents
+        )
+
+        if response.status_code != 200:
+            logger.error(f"OCR failed: {response.status_code} - {response.text}")
+            raise Exception(f"OCR failed: {response.status_code} - {response.text}")
+
+        result = response.json()
+        logger.info("OCR completed successfully")
+        return result
+
+    def _convert_to_markdown(self, ocr_result: dict) -> str:
+        """
+        Convert Mistral OCR result to markdown.
+        """
+        markdown_parts = []
+
+        # OCR result contains pages with text content
+        pages = ocr_result.get("pages", [])
+
+        for i, page in enumerate(pages):
+            page_text = page.get("markdown", "") or page.get("text", "")
+            if page_text:
+                markdown_parts.append(page_text)
+
+        # Join pages with separators
+        markdown_content = "\n\n---\n\n".join(markdown_parts)
+
+        return markdown_content
 
     async def pdf_to_markdown(self, pdf_path: str) -> str:
         """
-        Convert PDF to markdown using Mistral's OCR capability.
-        Converts each page to an image and processes them sequentially.
+        Convert PDF to markdown using Mistral's OCR API.
+
+        Flow:
+        1. Upload PDF to Mistral
+        2. Get signed URL
+        3. Run OCR
+        4. Convert result to markdown
         """
         logger.info(f"Starting OCR processing for: {pdf_path}")
 
-        # Convert PDF to images
-        images = self._pdf_to_images(pdf_path)
-        total_pages = len(images)
-        logger.info(f"PDF has {total_pages} pages")
-
-        # OCR each page
-        markdown_parts = []
         async with httpx.AsyncClient() as client:
-            for i, img_base64 in enumerate(images):
-                page_num = i + 1
-                logger.info(f"Processing page {page_num}/{total_pages}")
+            # Step 1: Upload file
+            file_id = await self._upload_file(client, pdf_path)
 
-                page_markdown = await self._ocr_image(client, img_base64, page_num, total_pages)
-                markdown_parts.append(page_markdown)
+            # Step 2: Get signed URL
+            signed_url = await self._get_signed_url(client, file_id)
 
-                logger.info(f"Page {page_num} completed")
+            # Step 3: Run OCR
+            ocr_result = await self._run_ocr(client, signed_url)
 
-        # Combine all pages
-        markdown_content = "\n\n---\n\n".join(markdown_parts)
+            # Step 4: Convert to markdown
+            markdown_content = self._convert_to_markdown(ocr_result)
 
-        logger.info(f"OCR completed. Extracted {len(markdown_content)} characters from {total_pages} pages")
+        logger.info(f"OCR completed. Extracted {len(markdown_content)} characters")
         return markdown_content
