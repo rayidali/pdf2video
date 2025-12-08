@@ -3,67 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Paper to Video | Research Paper Explainer</title>
+    <title>Paper to Video</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Paper to Video</h1>
-            <p class="subtitle">Convert research papers into animated explainer videos</p>
+            <div class="logo">
+                <div class="logo-icon">P2V</div>
+                <div class="logo-text">
+                    <h1>Paper to Video</h1>
+                    <p>Transform research papers into explainer videos</p>
+                </div>
+            </div>
         </header>
 
         <main>
             <!-- Upload Section -->
-            <section id="upload-section" class="card">
-                <div class="card-header">
+            <section id="upload-section" class="window">
+                <div class="window-bar">
                     <div class="window-dots">
-                        <span class="window-dot red"></span>
-                        <span class="window-dot yellow"></span>
-                        <span class="window-dot green"></span>
+                        <span class="window-dot"></span>
+                        <span class="window-dot"></span>
                     </div>
-                    <span class="card-title">Step 1</span>
+                    <span class="window-title">upload.pdf</span>
                 </div>
-                <div class="card-content">
+                <div class="window-body">
                     <h2>Upload Your PDF</h2>
                     <div id="drop-zone" class="drop-zone">
                         <div class="drop-zone-content">
                             <span class="drop-icon">+</span>
                             <p>Drag & drop your PDF here</p>
                             <p class="or-text">or</p>
-                            <label for="file-input" class="btn btn-primary">Browse Files</label>
+                            <label for="file-input" class="btn">Browse Files</label>
                             <input type="file" id="file-input" accept=".pdf" hidden>
                         </div>
                     </div>
                     <div id="file-info" class="file-info hidden">
                         <span class="file-icon">PDF</span>
                         <span id="file-name"></span>
-                        <button id="remove-file" class="btn-icon" title="Remove file">×</button>
+                        <button id="remove-file" class="btn-icon" title="Remove">×</button>
                     </div>
-                    <button id="upload-btn" class="btn btn-primary btn-large" disabled>Upload PDF</button>
+                    <button id="upload-btn" class="btn btn-dark btn-full" disabled>Upload PDF</button>
                 </div>
             </section>
 
             <!-- Processing Section -->
-            <section id="processing-section" class="card hidden">
-                <div class="card-header">
+            <section id="processing-section" class="window hidden">
+                <div class="window-bar">
                     <div class="window-dots">
-                        <span class="window-dot red"></span>
-                        <span class="window-dot yellow"></span>
-                        <span class="window-dot green"></span>
+                        <span class="window-dot"></span>
+                        <span class="window-dot"></span>
                     </div>
-                    <span class="card-title">Step 2</span>
+                    <span class="window-title">process.ocr</span>
                 </div>
-                <div class="card-content">
+                <div class="window-body">
                     <h2>Process Document</h2>
                     <div class="job-info">
                         <p>Job ID: <code id="job-id"></code></p>
                         <p>Status: <span id="job-status" class="status-badge">Uploaded</span></p>
                     </div>
-                    <button id="process-btn" class="btn btn-primary btn-large">Extract Text with OCR</button>
+                    <button id="process-btn" class="btn btn-dark btn-full">Extract Text with OCR</button>
                     <div id="processing-spinner" class="spinner hidden">
                         <div class="spinner-circle"></div>
                         <p>Processing... This may take a minute.</p>
@@ -72,17 +75,16 @@
             </section>
 
             <!-- Results Section -->
-            <section id="results-section" class="card hidden">
-                <div class="card-header">
+            <section id="results-section" class="window hidden">
+                <div class="window-bar">
                     <div class="window-dots">
-                        <span class="window-dot red"></span>
-                        <span class="window-dot yellow"></span>
-                        <span class="window-dot green"></span>
+                        <span class="window-dot"></span>
+                        <span class="window-dot"></span>
                     </div>
-                    <span class="card-title">Step 3</span>
+                    <span class="window-title">output.md</span>
                 </div>
-                <div class="card-content">
-                    <h2>Review Extracted Content</h2>
+                <div class="window-body">
+                    <h2>Extracted Content</h2>
                     <div class="tabs">
                         <button class="tab-btn active" data-tab="preview">Preview</button>
                         <button class="tab-btn" data-tab="raw">Raw Markdown</button>
@@ -94,43 +96,42 @@
                         <pre id="markdown-raw" class="markdown-raw"></pre>
                     </div>
                     <div class="results-actions">
-                        <button id="copy-btn" class="btn btn-secondary">Copy Markdown</button>
-                        <button id="new-upload-btn" class="btn btn-primary">Process Another</button>
+                        <button id="copy-btn" class="btn">Copy Markdown</button>
+                        <button id="new-upload-btn" class="btn btn-dark">New Upload</button>
                     </div>
                 </div>
             </section>
 
-            <!-- Future Steps Preview -->
-            <section class="card future-steps">
-                <div class="card-header">
+            <!-- Coming Soon -->
+            <section class="window future-steps">
+                <div class="window-bar">
                     <div class="window-dots">
-                        <span class="window-dot red"></span>
-                        <span class="window-dot yellow"></span>
-                        <span class="window-dot green"></span>
+                        <span class="window-dot"></span>
+                        <span class="window-dot"></span>
                     </div>
-                    <span class="card-title">Coming Soon</span>
+                    <span class="window-title">coming-soon.txt</span>
                 </div>
-                <div class="card-content">
+                <div class="window-body">
                     <div class="steps-grid">
                         <div class="step-card">
-                            <span class="step-icon">01</span>
+                            <span class="step-num">01</span>
                             <h3>AI Planning</h3>
-                            <p>Slide-by-slide presentation plan</p>
+                            <p>Presentation outline</p>
                         </div>
                         <div class="step-card">
-                            <span class="step-icon">02</span>
-                            <h3>Animations</h3>
-                            <p>3blue1brown-style visuals</p>
+                            <span class="step-num">02</span>
+                            <h3>Animation</h3>
+                            <p>Manim visuals</p>
                         </div>
                         <div class="step-card">
-                            <span class="step-icon">03</span>
+                            <span class="step-num">03</span>
                             <h3>Voiceover</h3>
-                            <p>AI-generated narration</p>
+                            <p>AI narration</p>
                         </div>
                         <div class="step-card">
-                            <span class="step-icon">04</span>
+                            <span class="step-num">04</span>
                             <h3>Export</h3>
-                            <p>Final video output</p>
+                            <p>Final video</p>
                         </div>
                     </div>
                 </div>
@@ -138,7 +139,7 @@
         </main>
 
         <footer>
-            <p>Built with FastAPI + Mistral OCR + Claude AI + Manim</p>
+            <p>FastAPI + Mistral OCR + Claude AI + Manim</p>
         </footer>
     </div>
 
