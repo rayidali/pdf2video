@@ -6,32 +6,20 @@
     <title>Paper to Video</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <div class="logo">
-                <div class="logo-icon">P2V</div>
-                <div class="logo-text">
-                    <h1>Paper to Video</h1>
-                    <p>Transform research papers into explainer videos</p>
-                </div>
-            </div>
+            <h1>Paper to Video</h1>
+            <p>Transform research papers into explainer videos</p>
         </header>
 
         <main>
             <!-- Upload Section -->
-            <section id="upload-section" class="window">
-                <div class="window-bar">
-                    <div class="window-dots">
-                        <span class="window-dot"></span>
-                        <span class="window-dot"></span>
-                    </div>
-                    <span class="window-title">upload.pdf</span>
-                </div>
-                <div class="window-body">
+            <section id="upload-section" class="card">
+                <div class="card-body">
                     <h2>Upload Your PDF</h2>
                     <div id="drop-zone" class="drop-zone">
                         <div class="drop-zone-content">
@@ -52,15 +40,8 @@
             </section>
 
             <!-- Processing Section -->
-            <section id="processing-section" class="window hidden">
-                <div class="window-bar">
-                    <div class="window-dots">
-                        <span class="window-dot"></span>
-                        <span class="window-dot"></span>
-                    </div>
-                    <span class="window-title">process.ocr</span>
-                </div>
-                <div class="window-body">
+            <section id="processing-section" class="card hidden">
+                <div class="card-body">
                     <h2>Process Document</h2>
                     <div class="job-info">
                         <p>Job ID: <code id="job-id"></code></p>
@@ -75,15 +56,8 @@
             </section>
 
             <!-- Results Section -->
-            <section id="results-section" class="window hidden">
-                <div class="window-bar">
-                    <div class="window-dots">
-                        <span class="window-dot"></span>
-                        <span class="window-dot"></span>
-                    </div>
-                    <span class="window-title">output.md</span>
-                </div>
-                <div class="window-body">
+            <section id="results-section" class="card hidden">
+                <div class="card-body">
                     <h2>Extracted Content</h2>
                     <div class="tabs">
                         <button class="tab-btn active" data-tab="preview">Preview</button>
@@ -103,15 +77,9 @@
             </section>
 
             <!-- Coming Soon -->
-            <section class="window future-steps">
-                <div class="window-bar">
-                    <div class="window-dots">
-                        <span class="window-dot"></span>
-                        <span class="window-dot"></span>
-                    </div>
-                    <span class="window-title">coming-soon.txt</span>
-                </div>
-                <div class="window-body">
+            <section class="card future-steps">
+                <div class="card-body">
+                    <h2>Coming Soon</h2>
                     <div class="steps-grid">
                         <div class="step-card">
                             <span class="step-num">01</span>
