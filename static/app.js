@@ -387,7 +387,10 @@ function showToast(message, type = 'info') {
     toast.textContent = message;
     document.body.appendChild(toast);
 
+    // Error toasts stay longer (8 seconds) so user can read them
+    const duration = type === 'error' ? 8000 : 3000;
+
     setTimeout(() => {
         toast.remove();
-    }, 3000);
+    }, duration);
 }

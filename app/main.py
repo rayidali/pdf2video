@@ -169,20 +169,25 @@ async def create_plan(job_id: str):
     """
     Create a presentation plan from the extracted markdown using Claude.
     """
-    if job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    # Check if markdown exists
+    # Check if markdown exists (don't rely on in-memory job storage)
     markdown_path = settings.OUTPUTS_DIR / job_id / "paper.md"
     if not markdown_path.exists():
-        raise HTTPException(status_code=400, detail="Markdown not found. Run OCR first.")
+        raise HTTPException(status_code=404, detail="Markdown not found. Please upload and process a PDF first.")
 
     logger.info(f"Creating presentation plan for job: {job_id}")
-    jobs[job_id].step = "planning"
+
+    # Create job entry if it doesn't exist (server may have restarted)
+    if job_id not in jobs:
+        jobs[job_id] = JobStatus(job_id=job_id, status="processing", step="planning")
+    else:
+        jobs[job_id].step = "planning"
 
     try:
         markdown_content = markdown_path.read_text()
+        logger.info(f"Read markdown content: {len(markdown_content)} chars")
+
         plan = await planning_service.create_presentation_plan(markdown_content)
+        logger.info(f"Plan generated with {len(plan.slides)} slides")
 
         # Save plan to file
         plan_path = settings.OUTPUTS_DIR / job_id / "plan.json"
@@ -199,8 +204,11 @@ async def create_plan(job_id: str):
 
     except Exception as e:
         logger.error(f"Planning failed for job {job_id}: {str(e)}")
-        jobs[job_id].status = "failed"
-        jobs[job_id].error = str(e)
+        import traceback
+        logger.error(traceback.format_exc())
+        if job_id in jobs:
+            jobs[job_id].status = "failed"
+            jobs[job_id].error = str(e)
         raise HTTPException(status_code=500, detail=f"Planning failed: {str(e)}")
 
 

@@ -46,13 +46,19 @@ IMPORTANT: Output ONLY valid JSON, no markdown code blocks or extra text."""
 
 class PlanningService:
     def __init__(self, api_key: str):
-        self.client = Anthropic(api_key=api_key)
+        if not api_key:
+            logger.warning("ANTHROPIC_API_KEY not set - planning will fail")
+        self.api_key = api_key
+        self.client = Anthropic(api_key=api_key) if api_key else None
         self.model = "claude-sonnet-4-20250514"
 
     async def create_presentation_plan(self, markdown_content: str) -> PresentationPlan:
         """
         Take extracted markdown from a paper and create a presentation plan.
         """
+        if not self.client:
+            raise ValueError("ANTHROPIC_API_KEY not configured. Please add it to your environment variables.")
+
         logger.info("Starting presentation planning with Claude...")
         logger.info(f"Input markdown length: {len(markdown_content)} characters")
 
