@@ -36,17 +36,42 @@ header {
     margin-bottom: 60px;
 }
 
+.logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+}
+
+.logo-icon {
+    width: 80px;
+    height: 80px;
+    background: var(--black);
+    color: var(--white);
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 24px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+}
+
+.logo-text {
+    text-align: left;
+}
+
 header h1 {
     font-family: 'Playfair Display', Georgia, serif;
-    font-size: 56px;
+    font-size: 36px;
     font-weight: 400;
-    letter-spacing: 4px;
+    letter-spacing: 2px;
     text-transform: uppercase;
-    margin-bottom: 16px;
+    margin-bottom: 4px;
 }
 
 header p {
-    font-size: 16px;
+    font-size: 14px;
     color: var(--gray-500);
     font-weight: 400;
 }
@@ -505,7 +530,7 @@ header p {
 
 .steps-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 16px;
 }
 
