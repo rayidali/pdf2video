@@ -28,6 +28,7 @@ const planSlidesCount = document.getElementById('plan-slides-count');
 const slidesContainer = document.getElementById('slides-container');
 const planJson = document.getElementById('plan-json');
 const copyPlanBtn = document.getElementById('copy-plan-btn');
+const newUploadBtnResults = document.getElementById('new-upload-btn-results');
 
 // State
 let selectedFile = null;
@@ -245,25 +246,44 @@ copyBtn.addEventListener('click', async () => {
 
 // Generate Plan
 planBtn.addEventListener('click', async () => {
-    if (!currentJobId) return;
+    if (!currentJobId) {
+        console.error('No job ID found');
+        return;
+    }
+
+    console.log('=== Starting Plan Generation ===');
+    console.log('Job ID:', currentJobId);
 
     planBtn.disabled = true;
     planBtn.textContent = 'Generating...';
+
+    // Show plan section with spinner
     planSection.classList.remove('hidden');
     planSpinner.classList.remove('hidden');
     planContent.classList.add('hidden');
+
+    // Scroll to plan section so user can see the spinner
+    planSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    console.log('Calling API: POST /api/plan/' + currentJobId);
 
     try {
         const response = await fetch(`/api/plan/${currentJobId}`, {
             method: 'POST'
         });
 
+        console.log('Response status:', response.status);
+
         if (!response.ok) {
             const error = await response.json();
+            console.error('API Error:', error);
             throw new Error(error.detail || 'Planning failed');
         }
 
         const data = await response.json();
+        console.log('Plan received:', data);
+        console.log('Number of slides:', data.plan?.slides?.length);
+
         displayPlan(data.plan);
 
         planSpinner.classList.add('hidden');
@@ -271,7 +291,9 @@ planBtn.addEventListener('click', async () => {
         resultsSection.classList.add('hidden');
 
         showToast('Plan generated successfully!', 'success');
+        console.log('=== Plan Generation Complete ===');
     } catch (error) {
+        console.error('Planning failed:', error);
         showToast(error.message, 'error');
         planSpinner.classList.add('hidden');
         planSection.classList.add('hidden');
@@ -322,8 +344,8 @@ copyPlanBtn.addEventListener('click', async () => {
     }
 });
 
-// New Upload
-newUploadBtn.addEventListener('click', () => {
+// New Upload - shared reset function
+function resetToUpload() {
     // Reset state
     selectedFile = null;
     currentJobId = null;
@@ -344,7 +366,13 @@ newUploadBtn.addEventListener('click', () => {
     processingSection.classList.add('hidden');
     planSection.classList.add('hidden');
     uploadSection.classList.remove('hidden');
-});
+}
+
+// New Upload button in plan section
+newUploadBtn.addEventListener('click', resetToUpload);
+
+// New Upload button in results section
+newUploadBtnResults.addEventListener('click', resetToUpload);
 
 // Status Update
 function updateStatus(status) {
