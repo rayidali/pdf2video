@@ -71,7 +71,36 @@
                     </div>
                     <div class="results-actions">
                         <button id="copy-btn" class="btn">Copy Markdown</button>
-                        <button id="new-upload-btn" class="btn btn-dark">New Upload</button>
+                        <button id="plan-btn" class="btn btn-dark">Generate Plan</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Planning Section -->
+            <section id="plan-section" class="card hidden">
+                <div class="card-body">
+                    <h2>Presentation Plan</h2>
+                    <div id="plan-spinner" class="spinner hidden">
+                        <div class="spinner-circle"></div>
+                        <p>Claude is planning your video... This may take a moment.</p>
+                    </div>
+                    <div id="plan-content" class="hidden">
+                        <div class="plan-header">
+                            <h3 id="plan-title"></h3>
+                            <p id="plan-summary"></p>
+                            <p class="plan-meta"><span id="plan-duration"></span> min &bull; <span id="plan-slides-count"></span> slides</p>
+                        </div>
+                        <div id="slides-container" class="slides-container"></div>
+                        <div class="tabs">
+                            <button class="tab-btn" data-tab="plan-json">Raw JSON</button>
+                        </div>
+                        <div id="plan-json-tab" class="tab-content hidden">
+                            <pre id="plan-json" class="markdown-raw"></pre>
+                        </div>
+                        <div class="results-actions">
+                            <button id="copy-plan-btn" class="btn">Copy JSON</button>
+                            <button id="new-upload-btn" class="btn btn-dark">New Upload</button>
+                        </div>
                     </div>
                 </div>
             </section>

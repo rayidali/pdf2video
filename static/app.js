@@ -17,6 +17,17 @@ const markdownRaw = document.getElementById('markdown-raw');
 const copyBtn = document.getElementById('copy-btn');
 const newUploadBtn = document.getElementById('new-upload-btn');
 const tabBtns = document.querySelectorAll('.tab-btn');
+const planBtn = document.getElementById('plan-btn');
+const planSection = document.getElementById('plan-section');
+const planSpinner = document.getElementById('plan-spinner');
+const planContent = document.getElementById('plan-content');
+const planTitle = document.getElementById('plan-title');
+const planSummary = document.getElementById('plan-summary');
+const planDuration = document.getElementById('plan-duration');
+const planSlidesCount = document.getElementById('plan-slides-count');
+const slidesContainer = document.getElementById('slides-container');
+const planJson = document.getElementById('plan-json');
+const copyPlanBtn = document.getElementById('copy-plan-btn');
 
 // State
 let selectedFile = null;
@@ -232,6 +243,85 @@ copyBtn.addEventListener('click', async () => {
     }
 });
 
+// Generate Plan
+planBtn.addEventListener('click', async () => {
+    if (!currentJobId) return;
+
+    planBtn.disabled = true;
+    planBtn.textContent = 'Generating...';
+    planSection.classList.remove('hidden');
+    planSpinner.classList.remove('hidden');
+    planContent.classList.add('hidden');
+
+    try {
+        const response = await fetch(`/api/plan/${currentJobId}`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Planning failed');
+        }
+
+        const data = await response.json();
+        displayPlan(data.plan);
+
+        planSpinner.classList.add('hidden');
+        planContent.classList.remove('hidden');
+        resultsSection.classList.add('hidden');
+
+        showToast('Plan generated successfully!', 'success');
+    } catch (error) {
+        showToast(error.message, 'error');
+        planSpinner.classList.add('hidden');
+        planSection.classList.add('hidden');
+        planBtn.disabled = false;
+        planBtn.textContent = 'Generate Plan';
+    }
+});
+
+// Display Plan
+function displayPlan(plan) {
+    planTitle.textContent = plan.paper_title;
+    planSummary.textContent = plan.paper_summary;
+    planDuration.textContent = plan.target_duration_minutes;
+    planSlidesCount.textContent = plan.slides.length;
+    planJson.textContent = JSON.stringify(plan, null, 2);
+
+    slidesContainer.innerHTML = '';
+    plan.slides.forEach((slide, index) => {
+        const slideEl = document.createElement('div');
+        slideEl.className = 'slide-card';
+        slideEl.innerHTML = `
+            <div class="slide-header">
+                <span class="slide-num">${slide.slide_number}</span>
+                <h4>${slide.title}</h4>
+                <span class="slide-type">${slide.visual_type}</span>
+            </div>
+            <div class="slide-body">
+                <p class="slide-visual"><strong>Visual:</strong> ${slide.visual_description}</p>
+                <div class="slide-points">
+                    <strong>Key Points:</strong>
+                    <ul>${slide.key_points.map(p => `<li>${p}</li>`).join('')}</ul>
+                </div>
+                <p class="slide-script"><strong>Narration:</strong> ${slide.voiceover_script}</p>
+                <p class="slide-duration">${slide.duration_seconds}s</p>
+            </div>
+        `;
+        slidesContainer.appendChild(slideEl);
+    });
+}
+
+// Copy Plan JSON
+copyPlanBtn.addEventListener('click', async () => {
+    try {
+        await navigator.clipboard.writeText(planJson.textContent);
+        showToast('Plan JSON copied to clipboard!', 'success');
+    } catch (error) {
+        showToast('Failed to copy', 'error');
+    }
+});
+
 // New Upload
 newUploadBtn.addEventListener('click', () => {
     // Reset state
@@ -246,10 +336,13 @@ newUploadBtn.addEventListener('click', () => {
     uploadBtn.textContent = 'Upload PDF';
     processBtn.classList.remove('hidden');
     processingSpinner.classList.add('hidden');
+    planBtn.disabled = false;
+    planBtn.textContent = 'Generate Plan';
 
     // Show upload section
     resultsSection.classList.add('hidden');
     processingSection.classList.add('hidden');
+    planSection.classList.add('hidden');
     uploadSection.classList.remove('hidden');
 });
 
