@@ -8,7 +8,9 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are the world's leading AI Engineer AND a world-class Mathematical Storyteller in the style of 3Blue1Brown.
 
-Your job: Take a dense technical research paper and turn it into a 10-15 slide narrative that a smart 14-year-old can visually and intuitively understand — WITHOUT removing the hard math, symbols, or data.
+Your job: Take a dense technical research paper and turn it into a **8-10 slide** narrative that a smart 14-year-old can visually and intuitively understand — WITHOUT removing the hard math, symbols, or data.
+
+CRITICAL: Keep responses CONCISE. Each slide's visual_description should be 2-3 sentences. Voiceover scripts should be 4-6 sentences. Do NOT exceed 8-10 slides total.
 
 You must PRESERVE the technical depth but WRAP it in geometric intuition, animated mental pictures, and visual metaphors so that the math feels tangible and spatial, just like a 3Blue1Brown video.
 
@@ -51,24 +53,19 @@ Your analogies must be:
 - **Continuous and Transformational**: Focus on how things change as parameters move
 - **Equation-as-Picture**: Explain equations visually - sums as stacking layers, products as scaling, norms as lengths, inner products as projections
 
-## STORY ARC (10-15 SLIDES)
+## STORY ARC (8-10 SLIDES)
 
 Follow this narrative flow:
 1. Big Hook / Visual Curiosity Gap
-2. Relatable Scenario as a Picture
-3. The Core Question in Visual Form
-4. Naive/Existing Approaches as Visual Comparisons
-5. The Key Idea / Geometric Intuition
-6. Architecture Overview / Method Big Picture
-7. Zoom Into the Math (Core Equation) as a Moving Picture
-8. Algorithm / Procedure Flow in Time
-9. Data & Experimental Setup as Visual Worlds
-10. Main Results as Before/After Animations
-11. Ablations / What Really Matters as Visual Switches
-12. Failure Cases & Limitations as Broken Pictures
-13. How This Changes the Landscape
-14. Future Directions
-15. Recap as a Single, Unified Diagram
+2. The Core Problem / Challenge
+3. Existing Approaches & Their Limits
+4. The Key Insight / Main Idea
+5. How It Works (Architecture/Method)
+6. The Math Made Visual
+7. Results & Comparisons
+8. Limitations & Future
+9. Key Takeaways (optional)
+10. Recap Diagram (optional)
 
 ## OUTPUT FORMAT
 
@@ -83,13 +80,12 @@ Output ONLY a valid JSON object matching this EXACT structure:
       "slide_number": 1,
       "title": "Hook Title",
       "visual_type": "diagram|equation|graph|comparison|timeline|text_reveal|icon_grid|code_walkthrough",
-      "visual_description": "VERY DETAILED 3Blue1Brown-style description: exact layout, colors, shapes, motion, layers. Describe what animates, morphs, or transforms. Be specific about positions (left/right/top/bottom), colors (blue points, red arrows, grey background), and motion (points drift toward cluster, surface tilts, curve bends).",
+      "visual_description": "2-3 sentence 3Blue1Brown-style description: layout, colors, shapes, motion. Be specific about positions and colors.",
       "key_points": [
-        "Key insight 1 - stated visually/geometrically",
-        "Key insight 2 - with specific visual metaphor",
-        "Key insight 3 - referencing the animation"
+        "Key insight 1",
+        "Key insight 2"
       ],
-      "voiceover_script": "Full narration script (8-15 sentences). Written conversationally like 3Blue1Brown. Reference specific parts of the visual. Guide the viewer's gaze. Build geometric intuition. Include pauses for emphasis. Make abstract concepts feel tangible and spatial.",
+      "voiceover_script": "4-6 sentence narration. Conversational like 3Blue1Brown. Reference the visual.",
       "duration_seconds": 45,
       "transition_note": "How this connects to the next slide - what visual element carries over or transforms"
     }
@@ -97,11 +93,10 @@ Output ONLY a valid JSON object matching this EXACT structure:
 }
 
 IMPORTANT:
-- Output ONLY valid JSON, no markdown code blocks or extra text
+- Output ONLY valid JSON, no markdown code blocks
 - visual_type must be one of: diagram, equation, graph, comparison, timeline, text_reveal, icon_grid, code_walkthrough
-- voiceover_script should be 8-15 sentences, conversational, referencing visuals
-- visual_description should be 3-5 sentences minimum, VERY specific about layout, colors, motion
-- Include 10-15 slides following the story arc above"""
+- Keep it CONCISE: 8-10 slides, 2-3 sentence visuals, 4-6 sentence voiceovers
+- MUST complete the full JSON - do not get cut off"""
 
 
 class PlanningService:
@@ -111,6 +106,31 @@ class PlanningService:
         self.api_key = api_key
         self.client = Anthropic(api_key=api_key) if api_key else None
         self.model = "claude-sonnet-4-20250514"
+
+    def _repair_truncated_json(self, text: str) -> str:
+        """Attempt to repair truncated JSON by closing open structures."""
+        logger.info("Attempting to repair truncated JSON...")
+
+        # Find the last complete slide by looking for the last complete object
+        # Count braces and brackets to understand structure
+        open_braces = text.count('{') - text.count('}')
+        open_brackets = text.count('[') - text.count(']')
+
+        # Try to find the last complete slide (ends with })
+        last_complete = text.rfind('},')
+        if last_complete > 0:
+            # Truncate to last complete slide and close the structure
+            text = text[:last_complete + 1]  # Keep the }
+            text += '\n  ]\n}'  # Close slides array and main object
+            logger.info(f"Repaired JSON by truncating to last complete slide")
+        else:
+            # Just try to close whatever is open
+            text += '"' * (text.count('"') % 2)  # Close any open string
+            text += '}' * open_braces
+            text += ']' * open_brackets
+            logger.info(f"Repaired JSON by closing {open_braces} braces and {open_brackets} brackets")
+
+        return text
 
     async def create_presentation_plan(self, markdown_content: str) -> PresentationPlan:
         """
@@ -133,20 +153,19 @@ class PlanningService:
 {markdown_content}
 ---
 
-Transform this paper into a 10-15 slide 3Blue1Brown-style presentation.
+Transform this paper into a concise 8-10 slide 3Blue1Brown-style presentation.
 
-Remember:
-- PRESERVE all technical depth, equations, and metrics
-- WRAP everything in geometric intuition and visual metaphors
-- Make each slide's visual_description EXTREMELY detailed and specific
-- Write voiceover_scripts as if Grant Sanderson himself would read them
-- Focus on making abstract concepts feel tangible and spatial"""
+CRITICAL CONSTRAINTS:
+- EXACTLY 8-10 slides (no more)
+- 2-3 sentences per visual_description
+- 4-6 sentences per voiceover_script
+- Complete the FULL valid JSON - do not truncate"""
 
         logger.info("Sending request to Claude API...")
 
         response = self.client.messages.create(
             model=self.model,
-            max_tokens=8000,
+            max_tokens=16000,
             messages=[
                 {"role": "user", "content": user_prompt}
             ],
@@ -156,6 +175,13 @@ Remember:
         response_text = response.content[0].text
         logger.info(f"Received response from Claude ({len(response_text)} chars)")
         logger.info(f"Token usage - Input: {response.usage.input_tokens}, Output: {response.usage.output_tokens}")
+        logger.info(f"Stop reason: {response.stop_reason}")
+
+        # Check if response was truncated
+        if response.stop_reason == "max_tokens":
+            logger.warning("Response was truncated due to max_tokens limit!")
+            # Try to repair truncated JSON by closing open structures
+            response_text = self._repair_truncated_json(response_text)
 
         # Parse JSON response
         try:
