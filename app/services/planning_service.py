@@ -111,7 +111,7 @@ class PlanningService:
             logger.warning("ANTHROPIC_API_KEY not set - planning will fail")
         self.api_key = api_key
         self.client = Anthropic(api_key=api_key) if api_key else None
-        self.model = "claude-opus-4-20250514"
+        self.model = "claude-sonnet-4-5-20250929"
 
     def _repair_truncated_json(self, text: str) -> str:
         """Attempt to repair truncated JSON by closing open structures."""
@@ -145,7 +145,7 @@ class PlanningService:
         if not self.client:
             raise ValueError("ANTHROPIC_API_KEY not configured. Please add it to your environment variables.")
 
-        logger.info("Starting presentation planning with Claude Opus 4...")
+        logger.info("Starting presentation planning with Claude Sonnet 4.5...")
         logger.info(f"Input markdown length: {len(markdown_content)} characters")
 
         # Truncate if too long (keep first 30000 chars for more context)
@@ -169,11 +169,11 @@ Requirements:
 - Focus on making abstract concepts feel tangible and spatial
 - Complete the FULL JSON structure with all slides"""
 
-        logger.info("Sending request to Claude Opus 4 API...")
+        logger.info("Sending request to Claude Sonnet 4.5 API...")
 
         response = self.client.messages.create(
             model=self.model,
-            max_tokens=25000,
+            max_tokens=16000,
             messages=[
                 {"role": "user", "content": user_prompt}
             ],
