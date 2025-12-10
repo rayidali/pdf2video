@@ -9,9 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from app.config import settings
-from app.models.schemas import JobStatus, PresentationPlan
+from app.models.schemas import JobStatus, PresentationPlan, SlideContent
 from app.services.ocr_service import MistralOCRService
 from app.services.planning_service import PlanningService
+from app.services.manim_service import ManimService
 
 # Configure logging
 logging.basicConfig(
@@ -29,6 +30,7 @@ app = FastAPI(
 # Initialize services
 ocr_service = MistralOCRService(settings.MISTRAL_API_KEY)
 planning_service = PlanningService(settings.ANTHROPIC_API_KEY)
+manim_service = ManimService(settings.ANTHROPIC_API_KEY)
 
 # Ensure directories exist
 settings.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -224,3 +226,124 @@ async def get_plan(job_id: str):
 
     plan_data = json.loads(plan_path.read_text())
     return {"job_id": job_id, "plan": plan_data}
+
+
+@app.post("/api/manim/{job_id}")
+async def generate_manim_code(job_id: str):
+    """
+    Generate Manim code for all slides in the presentation plan.
+    Generates code one slide at a time and saves to files.
+    """
+    # Check if plan exists
+    plan_path = settings.OUTPUTS_DIR / job_id / "plan.json"
+    if not plan_path.exists():
+        raise HTTPException(status_code=404, detail="Plan not found. Create a plan first.")
+
+    logger.info(f"Starting Manim code generation for job: {job_id}")
+
+    # Create job entry if it doesn't exist
+    if job_id not in jobs:
+        jobs[job_id] = JobStatus(job_id=job_id, status="processing", step="manim_generation")
+    else:
+        jobs[job_id].step = "manim_generation"
+
+    try:
+        # Load the plan
+        plan_data = json.loads(plan_path.read_text())
+        plan = PresentationPlan(**plan_data)
+        logger.info(f"Loaded plan with {len(plan.slides)} slides")
+
+        # Create slides directory
+        slides_dir = settings.OUTPUTS_DIR / job_id / "slides"
+        slides_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate code for each slide
+        generated_slides = []
+        for slide in plan.slides:
+            slide_id = f"s{slide.slide_number:03d}"
+            logger.info(f"Generating code for slide {slide_id}...")
+
+            manim_slide = await manim_service.generate_slide_code(
+                slide=slide,
+                paper_title=plan.paper_title,
+                paper_summary=plan.paper_summary
+            )
+
+            # Save the code to file
+            code_path = slides_dir / f"{slide_id}.py"
+            code_path.write_text(manim_slide.manim_code)
+            logger.info(f"Saved Manim code to: {code_path}")
+
+            generated_slides.append({
+                "slide_id": slide_id,
+                "slide_number": slide.slide_number,
+                "title": slide.title,
+                "class_name": manim_slide.class_name,
+                "code_path": str(code_path),
+                "expected_duration": manim_slide.expected_duration
+            })
+
+        # Save manifest of all generated slides
+        manifest_path = slides_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(generated_slides, indent=2))
+        logger.info(f"Saved manifest to: {manifest_path}")
+
+        jobs[job_id].step = "manim_complete"
+
+        return {
+            "job_id": job_id,
+            "status": "manim_complete",
+            "slides_generated": len(generated_slides),
+            "slides": generated_slides
+        }
+
+    except Exception as e:
+        logger.error(f"Manim generation failed for job {job_id}: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        if job_id in jobs:
+            jobs[job_id].status = "failed"
+            jobs[job_id].error = str(e)
+        raise HTTPException(status_code=500, detail=f"Manim generation failed: {str(e)}")
+
+
+@app.get("/api/manim/{job_id}")
+async def get_manim_code(job_id: str):
+    """
+    Get all generated Manim code for a job.
+    """
+    slides_dir = settings.OUTPUTS_DIR / job_id / "slides"
+    manifest_path = slides_dir / "manifest.json"
+
+    if not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="Manim code not found. Generate it first.")
+
+    manifest = json.loads(manifest_path.read_text())
+
+    # Load all code files
+    slides_with_code = []
+    for slide_info in manifest:
+        code_path = Path(slide_info["code_path"])
+        if code_path.exists():
+            slide_info["code"] = code_path.read_text()
+        slides_with_code.append(slide_info)
+
+    return {"job_id": job_id, "slides": slides_with_code}
+
+
+@app.get("/api/manim/{job_id}/{slide_id}")
+async def get_slide_code(job_id: str, slide_id: str):
+    """
+    Get Manim code for a specific slide.
+    slide_id should be like 's001', 's002', etc.
+    """
+    code_path = settings.OUTPUTS_DIR / job_id / "slides" / f"{slide_id}.py"
+
+    if not code_path.exists():
+        raise HTTPException(status_code=404, detail=f"Slide code not found: {slide_id}")
+
+    return {
+        "job_id": job_id,
+        "slide_id": slide_id,
+        "code": code_path.read_text()
+    }
