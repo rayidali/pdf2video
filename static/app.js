@@ -246,12 +246,8 @@ copyBtn.addEventListener('click', async () => {
 
 // Generate Plan
 planBtn.addEventListener('click', async () => {
-    // DEBUG: Popup to confirm click is registered
-    alert('Button clicked! Job ID: ' + currentJobId);
-
     if (!currentJobId) {
         console.error('No job ID found');
-        alert('ERROR: No job ID');
         return;
     }
 
