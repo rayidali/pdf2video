@@ -29,6 +29,12 @@ const slidesContainer = document.getElementById('slides-container');
 const planJson = document.getElementById('plan-json');
 const copyPlanBtn = document.getElementById('copy-plan-btn');
 const newUploadBtnResults = document.getElementById('new-upload-btn-results');
+const manimBtn = document.getElementById('manim-btn');
+const manimSection = document.getElementById('manim-section');
+const manimSpinner = document.getElementById('manim-spinner');
+const manimContent = document.getElementById('manim-content');
+const manimSlidesCount = document.getElementById('manim-slides-count');
+const manimSlidesContainer = document.getElementById('manim-slides-container');
 
 // State
 let selectedFile = null;
@@ -344,6 +350,117 @@ copyPlanBtn.addEventListener('click', async () => {
     }
 });
 
+// Generate Manim Code
+manimBtn.addEventListener('click', async () => {
+    if (!currentJobId) {
+        console.error('No job ID found');
+        return;
+    }
+
+    console.log('=== Starting Manim Code Generation ===');
+    console.log('Job ID:', currentJobId);
+
+    manimBtn.disabled = true;
+    manimBtn.textContent = 'Generating...';
+
+    // Show manim section with spinner
+    manimSection.classList.remove('hidden');
+    manimSpinner.classList.remove('hidden');
+    manimContent.classList.add('hidden');
+
+    // Scroll to manim section so user can see the spinner
+    manimSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    console.log('Calling API: POST /api/manim/' + currentJobId);
+
+    try {
+        const response = await fetch(`/api/manim/${currentJobId}`, {
+            method: 'POST'
+        });
+
+        console.log('Response status:', response.status);
+
+        if (!response.ok) {
+            const error = await response.json();
+            console.error('API Error:', error);
+            throw new Error(error.detail || 'Manim generation failed');
+        }
+
+        const data = await response.json();
+        console.log('Manim code received:', data);
+        console.log('Number of slides generated:', data.slides_generated);
+
+        // Fetch full code for each slide
+        const fullDataResponse = await fetch(`/api/manim/${currentJobId}`);
+        const fullData = await fullDataResponse.json();
+
+        displayManimCode(fullData.slides);
+
+        manimSpinner.classList.add('hidden');
+        manimContent.classList.remove('hidden');
+        planSection.classList.add('hidden');
+
+        showToast('Manim code generated successfully!', 'success');
+        console.log('=== Manim Code Generation Complete ===');
+    } catch (error) {
+        console.error('Manim generation failed:', error);
+        showToast(error.message, 'error');
+        manimSpinner.classList.add('hidden');
+        manimSection.classList.add('hidden');
+        manimBtn.disabled = false;
+        manimBtn.textContent = 'Generate Manim Code';
+    }
+});
+
+// Display Manim Code
+function displayManimCode(slides) {
+    manimSlidesCount.textContent = slides.length;
+
+    manimSlidesContainer.innerHTML = '';
+    slides.forEach((slide) => {
+        const slideEl = document.createElement('div');
+        slideEl.className = 'slide-card manim-slide';
+        slideEl.innerHTML = `
+            <div class="slide-header">
+                <span class="slide-num">${slide.slide_id}</span>
+                <h4>${slide.title}</h4>
+                <span class="slide-type">${slide.class_name}</span>
+            </div>
+            <div class="slide-body">
+                <div class="code-container">
+                    <div class="code-header">
+                        <span>${slide.slide_id}.py</span>
+                        <button class="btn-copy-code" data-code="${encodeURIComponent(slide.code)}">Copy</button>
+                    </div>
+                    <pre class="code-block"><code>${escapeHtml(slide.code)}</code></pre>
+                </div>
+                <p class="slide-duration">Expected: ${slide.expected_duration}s</p>
+            </div>
+        `;
+        manimSlidesContainer.appendChild(slideEl);
+    });
+
+    // Add copy handlers for code blocks
+    document.querySelectorAll('.btn-copy-code').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const code = decodeURIComponent(btn.dataset.code);
+            try {
+                await navigator.clipboard.writeText(code);
+                showToast('Code copied to clipboard!', 'success');
+            } catch (error) {
+                showToast('Failed to copy', 'error');
+            }
+        });
+    });
+}
+
+// Escape HTML for code display
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // New Upload - shared reset function
 function resetToUpload() {
     // Reset state
@@ -360,11 +477,14 @@ function resetToUpload() {
     processingSpinner.classList.add('hidden');
     planBtn.disabled = false;
     planBtn.textContent = 'Generate Plan';
+    manimBtn.disabled = false;
+    manimBtn.textContent = 'Generate Manim Code';
 
     // Show upload section
     resultsSection.classList.add('hidden');
     processingSection.classList.add('hidden');
     planSection.classList.add('hidden');
+    manimSection.classList.add('hidden');
     uploadSection.classList.remove('hidden');
 }
 

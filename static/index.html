@@ -133,6 +133,33 @@
                         </div>
                         <div class="results-actions">
                             <button id="copy-plan-btn" class="btn">Copy JSON</button>
+                            <button id="manim-btn" class="btn btn-dark">Generate Manim Code</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Manim Code Section -->
+            <section id="manim-section" class="card hidden">
+                <div class="card-header">
+                    <div class="card-dots">
+                        <span class="card-dot"></span>
+                        <span class="card-dot"></span>
+                    </div>
+                    <span class="card-title">slides/*.py</span>
+                </div>
+                <div class="card-body">
+                    <h2>Manim Animation Code</h2>
+                    <div id="manim-spinner" class="spinner hidden">
+                        <div class="spinner-circle"></div>
+                        <p>Generating Manim code for each slide... This may take a few minutes.</p>
+                    </div>
+                    <div id="manim-content" class="hidden">
+                        <div class="manim-header">
+                            <p>Generated <span id="manim-slides-count"></span> slide animations</p>
+                        </div>
+                        <div id="manim-slides-container" class="slides-container"></div>
+                        <div class="results-actions">
                             <button id="new-upload-btn" class="btn btn-dark">New Upload</button>
                         </div>
                     </div>
