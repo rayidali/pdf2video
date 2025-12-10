@@ -6,7 +6,7 @@
     <title>Paper to Video</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -24,6 +24,13 @@
         <main>
             <!-- Upload Section -->
             <section id="upload-section" class="card">
+                <div class="card-header">
+                    <div class="card-dots">
+                        <span class="card-dot"></span>
+                        <span class="card-dot"></span>
+                    </div>
+                    <span class="card-title">upload.pdf</span>
+                </div>
                 <div class="card-body">
                     <h2>Upload Your PDF</h2>
                     <div id="drop-zone" class="drop-zone">
@@ -46,6 +53,13 @@
 
             <!-- Processing Section -->
             <section id="processing-section" class="card hidden">
+                <div class="card-header">
+                    <div class="card-dots">
+                        <span class="card-dot"></span>
+                        <span class="card-dot"></span>
+                    </div>
+                    <span class="card-title">process.ocr</span>
+                </div>
                 <div class="card-body">
                     <h2>Process Document</h2>
                     <div class="job-info">
@@ -62,6 +76,13 @@
 
             <!-- Results Section -->
             <section id="results-section" class="card hidden">
+                <div class="card-header">
+                    <div class="card-dots">
+                        <span class="card-dot"></span>
+                        <span class="card-dot"></span>
+                    </div>
+                    <span class="card-title">output.md</span>
+                </div>
                 <div class="card-body">
                     <h2>Extracted Content</h2>
                     <div class="tabs">
@@ -84,6 +105,13 @@
 
             <!-- Planning Section -->
             <section id="plan-section" class="card hidden">
+                <div class="card-header">
+                    <div class="card-dots">
+                        <span class="card-dot"></span>
+                        <span class="card-dot"></span>
+                    </div>
+                    <span class="card-title">plan.json</span>
+                </div>
                 <div class="card-body">
                     <h2>Presentation Plan</h2>
                     <div id="plan-spinner" class="spinner hidden">
@@ -94,7 +122,7 @@
                         <div class="plan-header">
                             <h3 id="plan-title"></h3>
                             <p id="plan-summary"></p>
-                            <p class="plan-meta"><span id="plan-duration"></span> min &bull; <span id="plan-slides-count"></span> slides</p>
+                            <p class="plan-meta"><span id="plan-duration"></span> min • <span id="plan-slides-count"></span> slides</p>
                         </div>
                         <div id="slides-container" class="slides-container"></div>
                         <div class="tabs">
@@ -113,8 +141,14 @@
 
             <!-- Coming Soon -->
             <section class="card future-steps">
+                <div class="card-header">
+                    <div class="card-dots">
+                        <span class="card-dot"></span>
+                        <span class="card-dot"></span>
+                    </div>
+                    <span class="card-title">coming-soon.txt</span>
+                </div>
                 <div class="card-body">
-                    <h2>Coming Soon</h2>
                     <div class="steps-grid">
                         <div class="step-card">
                             <span class="step-num">01</span>
