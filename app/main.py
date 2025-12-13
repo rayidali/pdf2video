@@ -13,6 +13,7 @@ from app.models.schemas import JobStatus, PresentationPlan, SlideContent
 from app.services.ocr_service import MistralOCRService
 from app.services.planning_service import PlanningService
 from app.services.manim_service import ManimService
+from app.services.render_service import GenerativeManimService
 
 # Configure logging
 logging.basicConfig(
@@ -31,6 +32,7 @@ app = FastAPI(
 ocr_service = MistralOCRService(settings.MISTRAL_API_KEY)
 planning_service = PlanningService(settings.ANTHROPIC_API_KEY)
 manim_service = ManimService(settings.ANTHROPIC_API_KEY)
+render_service = GenerativeManimService(settings.GENERATIVE_MANIM_API_URL)
 
 # Ensure directories exist
 settings.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -781,4 +783,267 @@ class Slide003(Scene):
             "view_plan": f"GET /api/plan/{job_id}",
             "view_manim": f"GET /api/manim/{job_id}"
         }
+    }
+
+
+# ============================================
+# RENDERING ENDPOINTS (Generative Manim API)
+# These actually render Manim code into videos
+# ============================================
+
+@app.get("/api/render/status")
+async def render_status():
+    """
+    Check if the Generative Manim render API is available.
+
+    The render API must be running separately:
+    - Local: docker run -p 8080:8080 generative-manim-api
+    - Or use a hosted instance
+
+    Returns availability status and configuration.
+    """
+    is_available = await render_service.check_availability()
+
+    return {
+        "render_enabled": settings.RENDER_ENABLED,
+        "api_url": settings.GENERATIVE_MANIM_API_URL,
+        "api_available": is_available,
+        "message": "Render API is ready" if is_available else "Render API not available. Run the Generative Manim API first."
+    }
+
+
+@app.post("/api/render/{job_id}/{slide_id}")
+async def render_slide(job_id: str, slide_id: str):
+    """
+    Render a single slide to video using the Generative Manim API.
+
+    This actually runs the Manim code and produces a video file,
+    catching runtime errors that static validation would miss.
+
+    Args:
+        job_id: The job ID
+        slide_id: The slide ID (e.g., 's001', 's002')
+
+    Returns:
+        Render result with video URL or error message
+    """
+    # Check if render API is available
+    if not await render_service.check_availability():
+        raise HTTPException(
+            status_code=503,
+            detail="Render API not available. Start the Generative Manim API first."
+        )
+
+    # Get the slide code
+    code_path = settings.OUTPUTS_DIR / job_id / "slides" / f"{slide_id}.py"
+    if not code_path.exists():
+        raise HTTPException(status_code=404, detail=f"Slide code not found: {slide_id}")
+
+    # Load manifest to get class name
+    manifest_path = settings.OUTPUTS_DIR / job_id / "slides" / "manifest.json"
+    if not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="Manifest not found")
+
+    manifest = json.loads(manifest_path.read_text())
+    slide_info = next((s for s in manifest if s["slide_id"] == slide_id), None)
+    if not slide_info:
+        raise HTTPException(status_code=404, detail=f"Slide not in manifest: {slide_id}")
+
+    code = code_path.read_text()
+    class_name = slide_info["class_name"]
+
+    logger.info(f"Rendering slide {slide_id} (class: {class_name}) for job {job_id}")
+
+    result = await render_service.render_code(code, class_name)
+
+    if result.success:
+        return {
+            "job_id": job_id,
+            "slide_id": slide_id,
+            "status": "success",
+            "video_url": result.video_url,
+            "video_path": result.video_path,
+            "render_time": result.render_time
+        }
+    else:
+        return {
+            "job_id": job_id,
+            "slide_id": slide_id,
+            "status": "failed",
+            "error": result.error_message
+        }
+
+
+@app.post("/api/render/{job_id}")
+async def render_all_slides(job_id: str):
+    """
+    Render all slides for a job to videos.
+
+    This processes each slide sequentially and returns results.
+    Failed slides include error messages that can be used for auto-fixing.
+
+    Args:
+        job_id: The job ID
+
+    Returns:
+        List of render results for each slide
+    """
+    # Check if render API is available
+    if not await render_service.check_availability():
+        raise HTTPException(
+            status_code=503,
+            detail="Render API not available. Start the Generative Manim API first."
+        )
+
+    # Load manifest
+    manifest_path = settings.OUTPUTS_DIR / job_id / "slides" / "manifest.json"
+    if not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="Manifest not found. Generate Manim code first.")
+
+    manifest = json.loads(manifest_path.read_text())
+    slides_dir = settings.OUTPUTS_DIR / job_id / "slides"
+
+    logger.info(f"Starting render of {len(manifest)} slides for job {job_id}")
+
+    results = []
+    successful = 0
+    failed = 0
+
+    for slide_info in manifest:
+        code_path = Path(slide_info["code_path"])
+        slide_id = slide_info["slide_id"]
+        class_name = slide_info["class_name"]
+
+        if not code_path.exists():
+            results.append({
+                "slide_id": slide_id,
+                "status": "failed",
+                "error": f"Code file not found: {code_path}"
+            })
+            failed += 1
+            continue
+
+        code = code_path.read_text()
+        result = await render_service.render_code(code, class_name)
+
+        if result.success:
+            results.append({
+                "slide_id": slide_id,
+                "status": "success",
+                "video_url": result.video_url,
+                "video_path": result.video_path,
+                "render_time": result.render_time
+            })
+            successful += 1
+        else:
+            results.append({
+                "slide_id": slide_id,
+                "status": "failed",
+                "error": result.error_message
+            })
+            failed += 1
+
+    logger.info(f"Render complete: {successful} successful, {failed} failed")
+
+    return {
+        "job_id": job_id,
+        "total_slides": len(manifest),
+        "successful": successful,
+        "failed": failed,
+        "results": results
+    }
+
+
+@app.post("/api/render/{job_id}/{slide_id}/fix")
+async def render_and_fix_slide(job_id: str, slide_id: str, max_attempts: int = 3):
+    """
+    Render a slide and auto-fix if it fails.
+
+    This is the full validation loop:
+    1. Attempt to render the slide
+    2. If it fails, send the error to Claude for fixing
+    3. Repeat up to max_attempts times
+
+    Args:
+        job_id: The job ID
+        slide_id: The slide ID
+        max_attempts: Maximum fix attempts (default 3)
+
+    Returns:
+        Final render result, with fix history if applicable
+    """
+    # Check if render API is available
+    if not await render_service.check_availability():
+        raise HTTPException(
+            status_code=503,
+            detail="Render API not available. Start the Generative Manim API first."
+        )
+
+    # Get the slide code and info
+    code_path = settings.OUTPUTS_DIR / job_id / "slides" / f"{slide_id}.py"
+    if not code_path.exists():
+        raise HTTPException(status_code=404, detail=f"Slide code not found: {slide_id}")
+
+    manifest_path = settings.OUTPUTS_DIR / job_id / "slides" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    slide_info = next((s for s in manifest if s["slide_id"] == slide_id), None)
+    if not slide_info:
+        raise HTTPException(status_code=404, detail=f"Slide not in manifest: {slide_id}")
+
+    code = code_path.read_text()
+    class_name = slide_info["class_name"]
+    fix_history = []
+
+    for attempt in range(max_attempts + 1):
+        logger.info(f"Render attempt {attempt + 1}/{max_attempts + 1} for {slide_id}")
+
+        result = await render_service.render_code(code, class_name)
+
+        if result.success:
+            # Success! Save the fixed code if we made changes
+            if attempt > 0:
+                code_path.write_text(code)
+                logger.info(f"Saved fixed code for {slide_id}")
+
+            return {
+                "job_id": job_id,
+                "slide_id": slide_id,
+                "status": "success",
+                "video_url": result.video_url,
+                "attempts": attempt + 1,
+                "fix_history": fix_history
+            }
+
+        # Render failed - try to fix
+        fix_history.append({
+            "attempt": attempt + 1,
+            "error": result.error_message
+        })
+
+        if attempt >= max_attempts:
+            # Exhausted attempts
+            return {
+                "job_id": job_id,
+                "slide_id": slide_id,
+                "status": "failed",
+                "error": result.error_message,
+                "attempts": attempt + 1,
+                "fix_history": fix_history,
+                "message": f"Failed to fix after {max_attempts} attempts"
+            }
+
+        # Request fix from Claude
+        logger.info(f"Requesting fix from Claude for {slide_id}...")
+        code = manim_service._request_fix(
+            code,
+            [f"[RENDER_ERROR] {result.error_message}"],
+            class_name
+        )
+
+    # Should not reach here
+    return {
+        "job_id": job_id,
+        "slide_id": slide_id,
+        "status": "failed",
+        "message": "Unexpected error in fix loop"
     }
