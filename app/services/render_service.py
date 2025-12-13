@@ -1,18 +1,22 @@
 """
-Generative Manim Render Service
+Generative Manim Service
 
 Integrates with the Generative Manim API to:
-1. Render Manim code into actual videos
-2. Validate code by running it (catches runtime errors)
-3. Get real error messages for auto-fix loops
+1. Generate Manim code from text descriptions (using their fine-tuned models)
+2. Render Manim code into actual videos
+3. Full pipeline: description → code → video
 
 API Docs: https://github.com/marcelo-earth/generative-manim
+
+Supported engines for code generation:
+- "openai" (GPT-4o with custom system prompt)
+- "anthropic" (Claude Sonnet with custom system prompt)
 """
 
 import httpx
 import logging
 import asyncio
-from typing import Optional
+from typing import Optional, Literal
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +24,18 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for rendering (can take a while for complex scenes)
 RENDER_TIMEOUT = 300  # 5 minutes
+CODE_GEN_TIMEOUT = 120  # 2 minutes for code generation
+
+# Available engines in Generative Manim API
+CodeGenEngine = Literal["openai", "anthropic"]
+
+
+@dataclass
+class CodeGenResult:
+    """Result of a code generation attempt."""
+    success: bool
+    code: Optional[str] = None
+    error_message: Optional[str] = None
 
 
 @dataclass
@@ -30,6 +46,7 @@ class RenderResult:
     video_path: Optional[str] = None
     error_message: Optional[str] = None
     render_time: Optional[float] = None
+    code: Optional[str] = None  # Include generated code if available
 
 
 class GenerativeManimService:
@@ -71,6 +88,175 @@ class GenerativeManimService:
             logger.warning(f"Generative Manim API not available: {e}")
             self._available = False
             return False
+
+    # ========================================
+    # CODE GENERATION (using GM's LLM models)
+    # ========================================
+
+    async def generate_code(
+        self,
+        prompt: str,
+        engine: CodeGenEngine = "anthropic"
+    ) -> CodeGenResult:
+        """
+        Generate Manim code from a text description using GM API's LLM.
+
+        This uses the Generative Manim API's fine-tuned prompts
+        specifically optimized for Manim code generation.
+
+        Args:
+            prompt: Text description of the animation to create
+            engine: LLM engine to use ("openai" or "anthropic")
+
+        Returns:
+            CodeGenResult with generated code or error
+        """
+        payload = {
+            "prompt": prompt,
+            "engine": engine
+        }
+
+        logger.info(f"Generating Manim code via GM API (engine: {engine})...")
+
+        try:
+            async with httpx.AsyncClient(timeout=CODE_GEN_TIMEOUT) as client:
+                response = await client.post(
+                    f"{self.api_url}/v1/code/generation",
+                    json=payload
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    code = data.get("code") or data.get("result")
+                    logger.info(f"Code generated successfully ({len(code) if code else 0} chars)")
+                    return CodeGenResult(
+                        success=True,
+                        code=code
+                    )
+                else:
+                    error_data = response.json() if response.content else {}
+                    error_msg = error_data.get("detail") or error_data.get("error") or f"HTTP {response.status_code}"
+                    logger.error(f"Code generation failed: {error_msg}")
+                    return CodeGenResult(
+                        success=False,
+                        error_message=error_msg
+                    )
+
+        except httpx.TimeoutException:
+            logger.error(f"Code generation timeout after {CODE_GEN_TIMEOUT}s")
+            return CodeGenResult(
+                success=False,
+                error_message=f"Code generation timed out after {CODE_GEN_TIMEOUT} seconds"
+            )
+        except Exception as e:
+            logger.error(f"Code generation error: {e}")
+            return CodeGenResult(
+                success=False,
+                error_message=str(e)
+            )
+
+    async def generate_code_chat(
+        self,
+        messages: list[dict],
+        engine: CodeGenEngine = "anthropic"
+    ) -> CodeGenResult:
+        """
+        Generate Manim code using chat-style interaction.
+
+        This allows for multi-turn conversations to refine the animation.
+
+        Args:
+            messages: List of message dicts with "role" and "content"
+            engine: LLM engine to use
+
+        Returns:
+            CodeGenResult with generated code or error
+        """
+        payload = {
+            "messages": messages,
+            "engine": engine
+        }
+
+        logger.info(f"Generating Manim code via chat (engine: {engine})...")
+
+        try:
+            async with httpx.AsyncClient(timeout=CODE_GEN_TIMEOUT) as client:
+                response = await client.post(
+                    f"{self.api_url}/v1/chat/generation",
+                    json=payload
+                )
+
+                if response.status_code == 200:
+                    # Chat endpoint may stream, try to get full response
+                    code = response.text
+                    logger.info(f"Code generated via chat ({len(code)} chars)")
+                    return CodeGenResult(
+                        success=True,
+                        code=code
+                    )
+                else:
+                    error_data = response.json() if response.content else {}
+                    error_msg = error_data.get("detail") or f"HTTP {response.status_code}"
+                    return CodeGenResult(
+                        success=False,
+                        error_message=error_msg
+                    )
+
+        except Exception as e:
+            logger.error(f"Chat code generation error: {e}")
+            return CodeGenResult(
+                success=False,
+                error_message=str(e)
+            )
+
+    async def generate_and_render(
+        self,
+        prompt: str,
+        class_name: str = "GeneratedScene",
+        engine: CodeGenEngine = "anthropic"
+    ) -> RenderResult:
+        """
+        Full pipeline: Generate code from description, then render to video.
+
+        This is the main method for going from visual description to video.
+
+        Args:
+            prompt: Text description of the animation
+            class_name: Name for the generated Scene class
+            engine: LLM engine for code generation
+
+        Returns:
+            RenderResult with video URL and generated code
+        """
+        # Step 1: Generate code
+        code_result = await self.generate_code(prompt, engine)
+
+        if not code_result.success:
+            return RenderResult(
+                success=False,
+                error_message=f"Code generation failed: {code_result.error_message}"
+            )
+
+        code = code_result.code
+
+        # Step 2: Extract class name from generated code (or use provided)
+        # The GM API might generate its own class names
+        import re
+        class_match = re.search(r'class\s+(\w+)\s*\(\s*Scene\s*\)', code)
+        if class_match:
+            actual_class_name = class_match.group(1)
+        else:
+            actual_class_name = class_name
+
+        # Step 3: Render the code
+        render_result = await self.render_code(code, actual_class_name)
+        render_result.code = code  # Include the generated code in result
+
+        return render_result
+
+    # ========================================
+    # RENDERING (existing methods)
+    # ========================================
 
     async def render_code(
         self,
