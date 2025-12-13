@@ -4,8 +4,12 @@ from anthropic import Anthropic
 from typing import Optional
 
 from app.models.schemas import SlideContent, ManimSlide
+from app.services.manim_validator import ManimValidator, validator
 
 logger = logging.getLogger(__name__)
+
+# Maximum number of fix attempts for broken code
+MAX_FIX_ATTEMPTS = 3
 
 SYSTEM_PROMPT = """You are an expert Manim developer who creates beautiful 3Blue1Brown-style mathematical animations.
 
@@ -54,14 +58,124 @@ class SlideTitle(Scene):
         self.wait()
 """
 
+FIX_SYSTEM_PROMPT = """You are an expert Manim debugger. Your job is to fix broken Manim code.
+
+You will receive:
+1. The original Manim code that has errors
+2. A list of specific errors found in the code
+
+Your task:
+1. Analyze each error carefully
+2. Fix ALL the errors while preserving the original animation intent
+3. Return ONLY the corrected Python code, no explanations
+
+Common fixes:
+- Syntax errors: Fix typos, missing colons, incorrect indentation
+- Import errors: Ensure 'from manim import *' is present
+- Name errors: Use correct Manim class/function names (e.g., MathTex not MathTeX)
+- Type errors: Ensure correct argument types for Manim functions
+- Missing construct: Ensure the Scene class has a construct(self) method
+
+Output ONLY the fixed Python code, nothing else."""
+
 
 class ManimService:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, skip_validation: bool = False):
         if not api_key:
             logger.warning("ANTHROPIC_API_KEY not set - manim generation will fail")
         self.api_key = api_key
         self.client = Anthropic(api_key=api_key) if api_key else None
         self.model = "claude-sonnet-4-5-20250929"
+        self.validator = validator
+        self.skip_validation = skip_validation
+
+    def _clean_code(self, response_text: str) -> str:
+        """Clean up Claude's response to extract pure Python code."""
+        code = response_text.strip()
+
+        # Remove markdown code blocks if present
+        if code.startswith("```python"):
+            code = code[9:]
+        elif code.startswith("```"):
+            code = code[3:]
+        if code.endswith("```"):
+            code = code[:-3]
+        code = code.strip()
+
+        # Ensure the code starts with the import
+        if not code.startswith("from manim import"):
+            code = "from manim import *\n\n" + code
+
+        return code
+
+    def _request_fix(self, code: str, errors: list[str], expected_class: str) -> str:
+        """Request Claude to fix broken code."""
+        error_report = self.validator.format_error_report(code, errors)
+
+        fix_prompt = f"""Fix the following Manim code. The class name must be `{expected_class}`.
+
+{error_report}
+
+Return ONLY the corrected Python code."""
+
+        logger.info(f"Requesting code fix from Claude...")
+
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=4000,
+            messages=[
+                {"role": "user", "content": fix_prompt}
+            ],
+            system=FIX_SYSTEM_PROMPT
+        )
+
+        fixed_code = self._clean_code(response.content[0].text)
+        logger.info(f"Received fixed code ({len(fixed_code)} chars)")
+        logger.info(f"Fix token usage - Input: {response.usage.input_tokens}, Output: {response.usage.output_tokens}")
+
+        return fixed_code
+
+    def _validate_and_fix(
+        self,
+        code: str,
+        expected_class: str,
+        max_attempts: int = MAX_FIX_ATTEMPTS
+    ) -> tuple[str, bool, list[str]]:
+        """
+        Validate code and attempt to fix if errors are found.
+
+        Returns:
+            (final_code, is_valid, remaining_errors)
+        """
+        # Skip validation if disabled (for testing without manim installed)
+        if self.skip_validation:
+            logger.info("Validation skipped (skip_validation=True)")
+            return code, True, []
+
+        for attempt in range(max_attempts + 1):
+            # Validate the code (skip import check since manim may not be installed in API server)
+            is_valid, errors = self.validator.validate(
+                code,
+                expected_class,
+                skip_import_check=True  # Server likely doesn't have manim installed
+            )
+
+            if is_valid:
+                if attempt > 0:
+                    logger.info(f"Code fixed successfully after {attempt} attempt(s)")
+                return code, True, []
+
+            logger.warning(f"Validation failed (attempt {attempt + 1}/{max_attempts + 1}): {errors}")
+
+            # If we've exhausted fix attempts, return with errors
+            if attempt >= max_attempts:
+                logger.error(f"Failed to fix code after {max_attempts} attempts")
+                return code, False, errors
+
+            # Request a fix from Claude
+            code = self._request_fix(code, errors, expected_class)
+
+        return code, False, errors
 
     async def generate_slide_code(
         self,
@@ -115,23 +229,21 @@ Make the animation approximately {slide.duration_seconds} seconds long using app
         logger.info(f"Received Manim code for slide {slide_id} ({len(response_text)} chars)")
         logger.info(f"Token usage - Input: {response.usage.input_tokens}, Output: {response.usage.output_tokens}")
 
-        # Clean up response - remove markdown code blocks if present
-        code = response_text.strip()
-        if code.startswith("```python"):
-            code = code[9:]
-        elif code.startswith("```"):
-            code = code[3:]
-        if code.endswith("```"):
-            code = code[:-3]
-        code = code.strip()
+        # Clean up the response
+        code = self._clean_code(response_text)
+        expected_class = f"Slide{slide.slide_number:03d}"
 
-        # Ensure the code starts with the import
-        if not code.startswith("from manim import"):
-            code = "from manim import *\n\n" + code
+        # Validate and fix if needed
+        code, is_valid, errors = self._validate_and_fix(code, expected_class)
+
+        if not is_valid:
+            logger.error(f"Slide {slide_id} has validation errors that could not be fixed: {errors}")
+            # Still return the code, but log the warning
+            # The code may still work at runtime even if static validation fails
 
         return ManimSlide(
             slide_number=slide.slide_number,
-            class_name=f"Slide{slide.slide_number:03d}",
+            class_name=expected_class,
             manim_code=code,
             expected_duration=float(slide.duration_seconds)
         )
