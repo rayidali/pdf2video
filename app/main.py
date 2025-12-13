@@ -4,7 +4,8 @@ import shutil
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import asyncio
+from fastapi import FastAPI, File, HTTPException, UploadFile, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -45,6 +46,9 @@ if static_dir.exists():
 
 # In-memory job storage (replace with Redis in production)
 jobs: dict[str, JobStatus] = {}
+
+# Track background generation tasks
+generation_tasks: dict[str, dict] = {}  # job_id -> {status, progress, results, cancel_flag}
 
 
 @app.get("/")
@@ -1333,3 +1337,255 @@ async def generate_custom_video(prompt: str, engine: str = "anthropic"):
             "error": result.error_message,
             "engine_used": engine
         }
+
+
+# ============================================
+# BACKGROUND VIDEO GENERATION (Non-blocking)
+# Use these for long-running generation tasks
+# ============================================
+
+async def _generate_videos_background(job_id: str, engine: str):
+    """Background task to generate all videos for a job."""
+    task = generation_tasks[job_id]
+
+    try:
+        # Load the plan
+        plan_path = settings.OUTPUTS_DIR / job_id / "plan.json"
+        plan_data = json.loads(plan_path.read_text())
+        slides = plan_data.get("slides", [])
+
+        task["total_slides"] = len(slides)
+
+        # Create slides directory
+        slides_dir = settings.OUTPUTS_DIR / job_id / "slides"
+        slides_dir.mkdir(parents=True, exist_ok=True)
+
+        gm_manifest = []
+
+        for i, slide in enumerate(slides):
+            # Check for cancellation
+            if task.get("cancel_flag"):
+                task["status"] = "cancelled"
+                logger.info(f"Generation cancelled for job {job_id}")
+                return
+
+            slide_number = slide["slide_number"]
+            visual_desc = slide.get("visual_description", "")
+            title = slide.get("title", f"Slide {slide_number}")
+            key_points = slide.get("key_points", [])
+
+            task["current_slide"] = slide_number
+            task["current_title"] = title
+
+            # Build prompt
+            prompt = f"""Create a Manim animation for a presentation slide titled "{title}".
+
+Visual Description:
+{visual_desc}
+
+Key Points to Visualize:
+{chr(10).join(f"- {point}" for point in key_points)}
+
+Requirements:
+- Create a clear, educational animation
+- Use appropriate colors and layout
+- Include smooth transitions between elements
+"""
+
+            logger.info(f"[BG] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
+
+            result = await render_service.generate_and_render(
+                prompt=prompt,
+                class_name=f"Slide{slide_number:03d}",
+                engine=engine
+            )
+
+            slide_id = f"s{slide_number:03d}"
+
+            if result.success:
+                # Save generated code
+                code_path = slides_dir / f"{slide_id}_gm.py"
+                if result.code:
+                    code_path.write_text(result.code)
+
+                slide_result = {
+                    "slide_number": slide_number,
+                    "slide_id": slide_id,
+                    "title": title,
+                    "status": "success",
+                    "video_url": result.video_url,
+                    "render_time": result.render_time
+                }
+                task["successful"] += 1
+
+                gm_manifest.append({
+                    "slide_id": slide_id,
+                    "slide_number": slide_number,
+                    "title": title,
+                    "class_name": f"Slide{slide_number:03d}",
+                    "code_path": str(code_path),
+                    "video_url": result.video_url,
+                    "video_path": result.video_path,
+                    "source": "generative_manim_api"
+                })
+            else:
+                slide_result = {
+                    "slide_number": slide_number,
+                    "slide_id": slide_id,
+                    "title": title,
+                    "status": "failed",
+                    "error": result.error_message
+                }
+                task["failed"] += 1
+
+            task["results"].append(slide_result)
+            task["completed_slides"] = i + 1
+
+        # Save GM manifest
+        gm_manifest_path = slides_dir / "gm_manifest.json"
+        gm_manifest_path.write_text(json.dumps(gm_manifest, indent=2))
+
+        task["status"] = "complete"
+        task["manifest_path"] = str(gm_manifest_path)
+        logger.info(f"[BG] Generation complete for job {job_id}: {task['successful']} success, {task['failed']} failed")
+
+    except Exception as e:
+        task["status"] = "error"
+        task["error"] = str(e)
+        logger.error(f"[BG] Generation error for job {job_id}: {e}")
+
+
+@app.post("/api/generate/{job_id}/start")
+async def start_video_generation(job_id: str, background_tasks: BackgroundTasks, engine: str = "anthropic"):
+    """
+    Start video generation in the background.
+
+    This returns immediately and processes slides in the background.
+    Use /api/generate/{job_id}/progress to check status.
+    Use /api/generate/{job_id}/cancel to stop generation.
+
+    Args:
+        job_id: The job ID
+        engine: LLM engine to use ("anthropic" or "openai")
+
+    Returns:
+        Task ID and status URL
+    """
+    # Check if already running
+    if job_id in generation_tasks and generation_tasks[job_id]["status"] == "running":
+        return {
+            "job_id": job_id,
+            "status": "already_running",
+            "message": "Generation already in progress. Check /api/generate/{job_id}/progress"
+        }
+
+    # Check if render API is available
+    if not await render_service.check_availability():
+        raise HTTPException(
+            status_code=503,
+            detail="Generative Manim API not available. Start it first."
+        )
+
+    # Load the plan to validate
+    plan_path = settings.OUTPUTS_DIR / job_id / "plan.json"
+    if not plan_path.exists():
+        raise HTTPException(status_code=404, detail="Plan not found. Create a plan first.")
+
+    plan_data = json.loads(plan_path.read_text())
+    slides = plan_data.get("slides", [])
+
+    if not slides:
+        raise HTTPException(status_code=400, detail="Plan has no slides")
+
+    # Initialize task tracker
+    generation_tasks[job_id] = {
+        "status": "running",
+        "engine": engine,
+        "total_slides": len(slides),
+        "completed_slides": 0,
+        "current_slide": 0,
+        "current_title": "",
+        "successful": 0,
+        "failed": 0,
+        "results": [],
+        "cancel_flag": False,
+        "error": None
+    }
+
+    # Start background task
+    background_tasks.add_task(_generate_videos_background, job_id, engine)
+
+    logger.info(f"Started background generation for job {job_id} with {len(slides)} slides")
+
+    return {
+        "job_id": job_id,
+        "status": "started",
+        "total_slides": len(slides),
+        "progress_url": f"/api/generate/{job_id}/progress",
+        "cancel_url": f"/api/generate/{job_id}/cancel"
+    }
+
+
+@app.get("/api/generate/{job_id}/progress")
+async def get_generation_progress(job_id: str):
+    """
+    Get the current progress of background video generation.
+
+    Returns:
+        Current status, progress percentage, and results so far
+    """
+    if job_id not in generation_tasks:
+        raise HTTPException(status_code=404, detail="No generation task found. Start one first.")
+
+    task = generation_tasks[job_id]
+
+    progress_pct = 0
+    if task["total_slides"] > 0:
+        progress_pct = round(task["completed_slides"] / task["total_slides"] * 100, 1)
+
+    return {
+        "job_id": job_id,
+        "status": task["status"],
+        "progress_percent": progress_pct,
+        "completed_slides": task["completed_slides"],
+        "total_slides": task["total_slides"],
+        "current_slide": task["current_slide"],
+        "current_title": task["current_title"],
+        "successful": task["successful"],
+        "failed": task["failed"],
+        "results": task["results"],
+        "error": task.get("error")
+    }
+
+
+@app.post("/api/generate/{job_id}/cancel")
+async def cancel_video_generation(job_id: str):
+    """
+    Cancel an in-progress video generation.
+
+    The current slide will finish, but no new slides will start.
+
+    Returns:
+        Cancellation status
+    """
+    if job_id not in generation_tasks:
+        raise HTTPException(status_code=404, detail="No generation task found.")
+
+    task = generation_tasks[job_id]
+
+    if task["status"] != "running":
+        return {
+            "job_id": job_id,
+            "status": task["status"],
+            "message": f"Task is not running (status: {task['status']})"
+        }
+
+    task["cancel_flag"] = True
+    logger.info(f"Cancellation requested for job {job_id}")
+
+    return {
+        "job_id": job_id,
+        "status": "cancelling",
+        "message": "Cancellation requested. Current slide will finish, then generation will stop.",
+        "completed_so_far": task["completed_slides"]
+    }
