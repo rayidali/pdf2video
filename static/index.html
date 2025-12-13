@@ -51,6 +51,30 @@
                 </div>
             </section>
 
+            <!-- Previous Jobs Section -->
+            <section id="jobs-section" class="card">
+                <div class="card-header">
+                    <div class="card-dots">
+                        <span class="card-dot"></span>
+                        <span class="card-dot"></span>
+                    </div>
+                    <span class="card-title">previous-jobs.cache</span>
+                </div>
+                <div class="card-body">
+                    <div class="jobs-header">
+                        <h2>Previous Jobs</h2>
+                        <button id="refresh-jobs-btn" class="btn">Refresh</button>
+                    </div>
+                    <p class="jobs-description">Resume from cached data without re-running API calls</p>
+                    <div id="jobs-list" class="jobs-list">
+                        <p class="jobs-loading">Loading cached jobs...</p>
+                    </div>
+                    <div class="dev-actions">
+                        <button id="create-fixture-btn" class="btn">Create Test Fixture</button>
+                    </div>
+                </div>
+            </section>
+
             <!-- Processing Section -->
             <section id="processing-section" class="card hidden">
                 <div class="card-header">

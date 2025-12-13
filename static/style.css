@@ -646,6 +646,116 @@ header {
     line-height: 1.4;
 }
 
+/* Previous Jobs Section */
+.jobs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.jobs-header h2 {
+    margin-bottom: 0;
+}
+
+.jobs-description {
+    font-size: 13px;
+    color: var(--gray-dark);
+    margin-bottom: 16px;
+}
+
+.jobs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 16px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.jobs-loading {
+    font-size: 14px;
+    color: var(--gray-dark);
+    text-align: center;
+    padding: 20px;
+}
+
+.job-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--gray);
+    border: 2px solid var(--black);
+    cursor: pointer;
+    transition: all 0.1s ease;
+}
+
+.job-card:hover {
+    background: var(--white);
+    transform: translateX(4px);
+}
+
+.job-card-id {
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 14px;
+    font-weight: 700;
+    background: var(--black);
+    color: var(--white);
+    padding: 4px 8px;
+}
+
+.job-card-info {
+    flex: 1;
+}
+
+.job-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.job-card-status {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+}
+
+.job-card-badge {
+    padding: 2px 6px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border: 1px solid var(--black);
+}
+
+.job-card-badge.complete {
+    background: var(--black);
+    color: var(--white);
+}
+
+.job-card-badge.partial {
+    background: var(--white);
+    color: var(--black);
+}
+
+.job-card-arrow {
+    font-size: 18px;
+    color: var(--gray-dark);
+}
+
+.dev-actions {
+    padding-top: 12px;
+    border-top: 1px solid var(--gray);
+}
+
+.no-jobs {
+    text-align: center;
+    padding: 24px;
+    color: var(--gray-dark);
+    font-size: 14px;
+}
+
 /* Footer */
 footer {
     text-align: center;

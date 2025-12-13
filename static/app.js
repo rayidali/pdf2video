@@ -514,3 +514,184 @@ function showToast(message, type = 'info') {
         toast.remove();
     }, duration);
 }
+
+// ============================================
+// JOB DISCOVERY & RESTORATION
+// ============================================
+
+const jobsList = document.getElementById('jobs-list');
+const refreshJobsBtn = document.getElementById('refresh-jobs-btn');
+const createFixtureBtn = document.getElementById('create-fixture-btn');
+const jobsSection = document.getElementById('jobs-section');
+
+// Load jobs on page load
+async function loadJobs() {
+    jobsList.innerHTML = '<p class="jobs-loading">Loading cached jobs...</p>';
+
+    try {
+        const response = await fetch('/api/jobs');
+        const data = await response.json();
+
+        if (data.jobs.length === 0) {
+            jobsList.innerHTML = '<p class="no-jobs">No cached jobs found. Upload a PDF or create a test fixture.</p>';
+            return;
+        }
+
+        jobsList.innerHTML = '';
+        data.jobs.forEach(job => {
+            const jobCard = document.createElement('div');
+            jobCard.className = 'job-card';
+            jobCard.onclick = () => restoreJob(job.job_id, job.completed_step);
+
+            const badgeClass = job.completed_step === 'manim_complete' ? 'complete' : 'partial';
+            const stepLabel = {
+                'manim_complete': 'Complete',
+                'plan_complete': 'Has Plan',
+                'ocr_complete': 'Has OCR',
+                'unknown': 'Unknown'
+            }[job.completed_step] || job.completed_step;
+
+            jobCard.innerHTML = `
+                <span class="job-card-id">${job.job_id}</span>
+                <div class="job-card-info">
+                    <div class="job-card-name">${job.pdf_name || 'Unknown PDF'}</div>
+                    <div class="job-card-status">
+                        <span class="job-card-badge ${badgeClass}">${stepLabel}</span>
+                        ${job.slides_count ? `<span>${job.slides_count} slides</span>` : ''}
+                    </div>
+                </div>
+                <span class="job-card-arrow">→</span>
+            `;
+
+            jobsList.appendChild(jobCard);
+        });
+    } catch (error) {
+        console.error('Failed to load jobs:', error);
+        jobsList.innerHTML = '<p class="no-jobs">Failed to load jobs. Server may be offline.</p>';
+    }
+}
+
+// Restore a job and navigate to the appropriate section
+async function restoreJob(jobId, completedStep) {
+    console.log(`Restoring job ${jobId} at step ${completedStep}`);
+
+    try {
+        // First restore the job on the server
+        const response = await fetch(`/api/jobs/${jobId}/restore`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to restore job');
+        }
+
+        const data = await response.json();
+        console.log('Job restored:', data);
+
+        // Set the current job ID
+        currentJobId = jobId;
+
+        // Hide all sections first
+        uploadSection.classList.add('hidden');
+        jobsSection.classList.add('hidden');
+        processingSection.classList.add('hidden');
+        resultsSection.classList.add('hidden');
+        planSection.classList.add('hidden');
+        manimSection.classList.add('hidden');
+
+        // Navigate to the appropriate section based on completed step
+        if (data.has_manim) {
+            // Show Manim section with existing code
+            const manimResponse = await fetch(`/api/manim/${jobId}`);
+            const manimData = await manimResponse.json();
+            displayManimCode(manimData.slides);
+            manimContent.classList.remove('hidden');
+            manimSpinner.classList.add('hidden');
+            manimSection.classList.remove('hidden');
+            showToast(`Restored job ${jobId} - Manim code ready!`, 'success');
+        } else if (data.has_plan) {
+            // Show Plan section with existing plan
+            const planResponse = await fetch(`/api/plan/${jobId}`);
+            const planData = await planResponse.json();
+            displayPlan(planData.plan);
+            planContent.classList.remove('hidden');
+            planSpinner.classList.add('hidden');
+            planSection.classList.remove('hidden');
+            showToast(`Restored job ${jobId} - Ready to generate Manim code!`, 'success');
+        } else if (data.has_markdown) {
+            // Show Results section with existing markdown
+            const mdResponse = await fetch(`/api/markdown/${jobId}`);
+            const mdData = await mdResponse.json();
+            displayMarkdown(mdData.markdown);
+            resultsSection.classList.remove('hidden');
+            showToast(`Restored job ${jobId} - Ready to generate plan!`, 'success');
+        } else {
+            // Show processing section
+            jobIdEl.textContent = jobId;
+            updateStatus('uploaded');
+            processingSection.classList.remove('hidden');
+            showToast(`Restored job ${jobId} - Ready to process OCR!`, 'success');
+        }
+
+        // Reset button states
+        planBtn.disabled = false;
+        planBtn.textContent = 'Generate Plan';
+        manimBtn.disabled = false;
+        manimBtn.textContent = 'Generate Manim Code';
+
+    } catch (error) {
+        console.error('Failed to restore job:', error);
+        showToast(`Failed to restore job: ${error.message}`, 'error');
+    }
+}
+
+// Create development fixture
+async function createFixture() {
+    createFixtureBtn.disabled = true;
+    createFixtureBtn.textContent = 'Creating...';
+
+    try {
+        const response = await fetch('/api/dev/create-fixture', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to create fixture');
+        }
+
+        const data = await response.json();
+        console.log('Fixture created:', data);
+
+        showToast('Test fixture created! Refreshing job list...', 'success');
+
+        // Reload jobs list
+        await loadJobs();
+    } catch (error) {
+        console.error('Failed to create fixture:', error);
+        showToast(`Failed to create fixture: ${error.message}`, 'error');
+    } finally {
+        createFixtureBtn.disabled = false;
+        createFixtureBtn.textContent = 'Create Test Fixture';
+    }
+}
+
+// Event listeners
+refreshJobsBtn.addEventListener('click', loadJobs);
+createFixtureBtn.addEventListener('click', createFixture);
+
+// Update resetToUpload to also show jobs section again
+const originalResetToUpload = resetToUpload;
+function resetToUpload() {
+    originalResetToUpload();
+    jobsSection.classList.remove('hidden');
+    loadJobs(); // Refresh the job list
+}
+
+// Reassign the event listeners with the updated function
+newUploadBtn.removeEventListener('click', originalResetToUpload);
+newUploadBtnResults.removeEventListener('click', originalResetToUpload);
+newUploadBtn.addEventListener('click', resetToUpload);
+newUploadBtnResults.addEventListener('click', resetToUpload);
+
+// Load jobs when the page loads
+document.addEventListener('DOMContentLoaded', loadJobs);
