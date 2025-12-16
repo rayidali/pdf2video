@@ -608,12 +608,18 @@ document.getElementById('back-to-plan-btn').addEventListener('click', () => {
     planSection.classList.remove('hidden');
     planContent.classList.remove('hidden');
     planSpinner.classList.add('hidden');
+    // Re-enable forward navigation
+    manimBtn.disabled = false;
+    manimBtn.textContent = 'Generate Videos';
 });
 
 // Back to OCR Results button (from plan section)
 document.getElementById('back-to-results-btn').addEventListener('click', () => {
     planSection.classList.add('hidden');
     resultsSection.classList.remove('hidden');
+    // Re-enable forward navigation
+    planBtn.disabled = false;
+    planBtn.textContent = 'Generate Plan';
 });
 
 // Status Update
