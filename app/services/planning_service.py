@@ -88,8 +88,15 @@ BLACK background. BLUE (primary), YELLOW (highlight), TEAL (secondary), RED (con
 brain, magnifying glass, star, robot, target, warehouse, galaxy, thought bubble
 → Use: circle, rectangle, node, box, dot, line, arrow
 
+## RENDER SAFETY (Prevents crashes!)
+- MAX 30 objects per slide - for "many/overload/crowd", use 5-10 fast-moving items
+- "Thousands of X" → draw 5-7 X moving rapidly
+- "Overload" → 5 items flooding in, not 100 items
+- NO SVGs or images - only geometric primitives
+
 ## TEXT RULES
 - Labels: MAX 12 chars
+- Use Text() for English words, MathTex only for actual equations
 - Use simple equations: "R = R1 + R2" not "R_{success}"
 
 ## OUTPUT FORMAT

@@ -1650,33 +1650,38 @@ async def _generate_kodisc_videos_background(job_id: str):
             task["current_slide"] = slide_number
             task["current_title"] = title
 
-            # Build Kodisc-safe prompt with 3B1B motion emphasis
+            # Build Kodisc-safe prompt with safety constraints to prevent crashes
             kodisc_prefix = (
                 "Create a 3Blue1Brown-style Manim scene. BLACK background. "
-                "IMPORTANT: Use continuous transformations - morph, flow, grow animations. "
-                "Avoid static 'slide' layouts. Include at least 2 animations (Transform + movement). "
-                "Scale text to fit frame. "
+                "SAFETY RULES (CRITICAL): "
+                "1) MAX 30 objects - for 'many' items, use 5-10 and animate them. "
+                "2) Use Text() for English, MathTex ONLY for actual equations. "
+                "3) NO SVGMobject or ImageMobject - only Circle, Rectangle, Line, Arrow, Text. "
+                "4) Each animation RunTime <= 2 seconds. "
+                "5) For 'overload/many': draw 5 items moving fast, NOT 100 items. "
+                "Use morph, flow, grow animations. "
             )
 
-            # Primary prompt - use the visual description
+            # Primary prompt - use the visual description with safety prefix
             primary_prompt = kodisc_prefix + (visual_desc if visual_desc else f"Simple diagram for: {title}")
 
-            # Simplified prompt - fallback with some animation
-            simplified_prompt = (
-                f"Create a Manim scene. BLACK background. "
-                f"Show title '{title[:30]}' at top using Write animation. "
-                f"Below, show a simple shape that transforms or grows to illustrate the concept."
+            # Middle-ground prompt - still animated but simpler (not just text)
+            middle_prompt = (
+                f"Create a Manim scene. BLACK background. MAX 20 objects. "
+                f"Show title '{title[:25]}' at top using Write animation. "
+                f"Below, draw a BLUE circle. Transform it into a YELLOW square. "
+                f"This represents the concept of '{title[:20]}'."
             )
 
             # Guaranteed fallback - always renders
             fallback_prompt = (
                 f"Create a simple Manim scene. BLACK background. "
-                f"Center the text '{title[:25]}' in WHITE. "
-                f"Use Write animation, then FadeOut."
+                f"Center the text '{title[:25]}' in WHITE using Text(). "
+                f"Use Write animation."
             )
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
-            logger.info(f"[Kodisc] Primary prompt: {primary_prompt[:100]}...")
+            logger.info(f"[Kodisc] Primary prompt: {primary_prompt[:120]}...")
 
             # Try primary prompt first
             result = await kodisc_service.generate_video(
@@ -1688,20 +1693,20 @@ async def _generate_kodisc_videos_background(job_id: str):
             attempt = 1
             used_prompt = "primary"
 
-            # If primary fails, try simplified prompt
+            # If primary fails, try middle-ground prompt (still has animation)
             if not result.success:
-                logger.warning(f"[Kodisc] Primary prompt failed for slide {slide_number}, trying simplified...")
+                logger.warning(f"[Kodisc] Primary prompt failed for slide {slide_number}, trying middle-ground...")
                 result = await kodisc_service.generate_video(
-                    prompt=simplified_prompt,
+                    prompt=middle_prompt,
                     aspect_ratio="16:9",
                     voiceover=False
                 )
                 attempt = 2
-                used_prompt = "simplified"
+                used_prompt = "middle"
 
-            # If simplified also fails, try guaranteed fallback
+            # If middle also fails, try guaranteed fallback
             if not result.success:
-                logger.warning(f"[Kodisc] Simplified prompt failed for slide {slide_number}, trying fallback...")
+                logger.warning(f"[Kodisc] Middle prompt failed for slide {slide_number}, trying fallback...")
                 result = await kodisc_service.generate_video(
                     prompt=fallback_prompt,
                     aspect_ratio="16:9",
