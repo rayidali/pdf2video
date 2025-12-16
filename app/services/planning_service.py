@@ -26,6 +26,15 @@ Every visual MUST be a TRANSFORMATION, not a static picture:
 - brain, magnifying glass, star, robot, target, warehouse, landscape, galaxy, thought bubble
 - Instead use: circle, rectangle, node, box, dot, line, arrow
 
+**TEXT LENGTH RULES** (prevents text going off screen):
+- Labels: MAX 12 characters (abbreviate if needed)
+- Titles: MAX 5 words
+- Key points: MAX 8 words each
+- Body text: MAX 6 words per line, break longer text into multiple lines
+- For equations with word subscripts: Use \\text{} wrapper
+  GOOD: "$R_{\\text{success}}$"
+  BAD: "$R_{success}$" (renders incorrectly)
+
 ## VISUAL DESCRIPTION FORMAT (MANDATORY)
 
 Each visual_description MUST follow this 3-line structure:
@@ -49,7 +58,7 @@ Example 4 - Showing learning:
 "Start: A dot at a fork with three equal paths. Transform: One path gradually thickens and turns YELLOW while others fade. End: The thick YELLOW path is labeled 'Learned Best Choice'."
 
 Example 5 - Showing math:
-"Start: The equation $L = L_1 + L_2$ fades in. Transform: $L_1$ highlights YELLOW, then $L_2$ highlights TEAL. End: Both terms glow, showing they work together."
+"Start: MathTex '$L = L_1 + L_2$' fades in centered. Transform: '$L_1$' highlights YELLOW, then '$L_2$' highlights TEAL. End: Both terms glow together."
 
 ## BAD EXAMPLES (these FAIL)
 

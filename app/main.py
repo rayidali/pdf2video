@@ -1645,23 +1645,70 @@ async def _generate_kodisc_videos_background(job_id: str):
             slide_number = slide["slide_number"]
             visual_desc = slide.get("visual_description", "")
             title = slide.get("title", f"Slide {slide_number}")
+            key_points = slide.get("key_points", [])
 
             task["current_slide"] = slide_number
             task["current_title"] = title
 
-            # Build Kodisc-safe prompt with primitives wrapper
-            # This prefix helps prevent rendering failures
-            kodisc_prefix = "Create a Manim scene using ONLY primitives (Circle, Rectangle, Line, Arrow, Text, MathTex). BLACK background. "
-            prompt = kodisc_prefix + (visual_desc if visual_desc else f"Simple diagram for: {title}")
+            # Build Kodisc-safe prompt with primitives wrapper + text fitting rules
+            kodisc_prefix = (
+                "Create a Manim scene. BLACK background. "
+                "PREVENT OVERFLOW: Use scale_to_fit_width(config.frame_width - 1) for text groups. "
+                "Use MathTex for equations. For word subscripts use \\\\text{} (e.g. R_{\\\\text{success}}). "
+                "Break long text into multiple lines. "
+            )
+
+            # Primary prompt - use the visual description
+            primary_prompt = kodisc_prefix + (visual_desc if visual_desc else f"Simple diagram for: {title}")
+
+            # Simplified prompt - fallback if primary fails (no complex transforms)
+            simplified_prompt = (
+                f"Create a Manim scene. BLACK background. "
+                f"Show title '{title[:30]}' at top in WHITE. "
+                f"Below, show 3 key points as bullet text, fading in one by one."
+            )
+
+            # Guaranteed fallback - always renders
+            fallback_prompt = (
+                f"Create a simple Manim scene. BLACK background. "
+                f"Center the text '{title[:25]}' in WHITE using font_size=48. "
+                f"Use FadeIn animation."
+            )
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
-            logger.info(f"[Kodisc] Prompt: {prompt[:100]}...")
+            logger.info(f"[Kodisc] Primary prompt: {primary_prompt[:100]}...")
 
+            # Try primary prompt first
             result = await kodisc_service.generate_video(
-                prompt=prompt,
+                prompt=primary_prompt,
                 aspect_ratio="16:9",
                 voiceover=False
             )
+
+            attempt = 1
+            used_prompt = "primary"
+
+            # If primary fails, try simplified prompt
+            if not result.success:
+                logger.warning(f"[Kodisc] Primary prompt failed for slide {slide_number}, trying simplified...")
+                result = await kodisc_service.generate_video(
+                    prompt=simplified_prompt,
+                    aspect_ratio="16:9",
+                    voiceover=False
+                )
+                attempt = 2
+                used_prompt = "simplified"
+
+            # If simplified also fails, try guaranteed fallback
+            if not result.success:
+                logger.warning(f"[Kodisc] Simplified prompt failed for slide {slide_number}, trying fallback...")
+                result = await kodisc_service.generate_video(
+                    prompt=fallback_prompt,
+                    aspect_ratio="16:9",
+                    voiceover=False
+                )
+                attempt = 3
+                used_prompt = "fallback"
 
             slide_id = f"s{slide_number:03d}"
 
@@ -1671,12 +1718,18 @@ async def _generate_kodisc_videos_background(job_id: str):
                     code_path = videos_dir / f"{slide_id}_kodisc.py"
                     code_path.write_text(result.code)
 
+                # Track if we used a fallback
+                status = "success" if used_prompt == "primary" else f"success_via_{used_prompt}"
+                logger.info(f"[Kodisc] Slide {slide_number} succeeded via {used_prompt} prompt (attempt {attempt})")
+
                 slide_result = {
                     "slide_number": slide_number,
                     "slide_id": slide_id,
                     "title": title,
                     "status": "success",
-                    "video_url": result.video_url
+                    "video_url": result.video_url,
+                    "attempts": attempt,
+                    "prompt_used": used_prompt
                 }
                 task["successful"] += 1
 
@@ -1686,15 +1739,19 @@ async def _generate_kodisc_videos_background(job_id: str):
                     "title": title,
                     "video_url": result.video_url,
                     "code_path": str(videos_dir / f"{slide_id}_kodisc.py") if result.code else None,
-                    "source": "kodisc"
+                    "source": "kodisc",
+                    "prompt_used": used_prompt
                 })
             else:
+                # All 3 attempts failed
+                logger.error(f"[Kodisc] Slide {slide_number} failed after all 3 attempts")
                 slide_result = {
                     "slide_number": slide_number,
                     "slide_id": slide_id,
                     "title": title,
                     "status": "failed",
-                    "error": result.error
+                    "error": result.error,
+                    "attempts": 3
                 }
                 task["failed"] += 1
 
