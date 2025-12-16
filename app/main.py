@@ -1649,9 +1649,10 @@ async def _generate_kodisc_videos_background(job_id: str):
             task["current_slide"] = slide_number
             task["current_title"] = title
 
-            # Send the visual description directly to Kodisc
-            # The planning service now generates simple, Manim-compatible descriptions
-            prompt = visual_desc if visual_desc else f"Create a simple diagram for: {title}"
+            # Build Kodisc-safe prompt with primitives wrapper
+            # This prefix helps prevent rendering failures
+            kodisc_prefix = "Create a Manim scene using ONLY primitives (Circle, Rectangle, Line, Arrow, Text, MathTex). BLACK background. "
+            prompt = kodisc_prefix + (visual_desc if visual_desc else f"Simple diagram for: {title}")
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
             logger.info(f"[Kodisc] Prompt: {prompt[:100]}...")

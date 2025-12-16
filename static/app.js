@@ -250,30 +250,63 @@ copyBtn.addEventListener('click', async () => {
     }
 });
 
-// Generate Plan
+// Generate Plan (or view cached plan)
 planBtn.addEventListener('click', async () => {
     if (!currentJobId) {
         console.error('No job ID found');
         return;
     }
 
-    console.log('=== Starting Plan Generation ===');
+    console.log('=== Plan Generation/View ===');
     console.log('Job ID:', currentJobId);
 
     planBtn.disabled = true;
-    planBtn.textContent = 'Generating...';
-
-    // Show plan section with spinner
-    planSection.classList.remove('hidden');
-    planSpinner.classList.remove('hidden');
-    planContent.classList.add('hidden');
-
-    // Scroll to plan section so user can see the spinner
-    planSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-    console.log('Calling API: POST /api/plan/' + currentJobId);
+    planBtn.textContent = 'Checking...';
 
     try {
+        // First check if plan already exists (cached)
+        console.log('Checking for cached plan...');
+        const cacheResponse = await fetch(`/api/plan/${currentJobId}`);
+
+        if (cacheResponse.ok) {
+            const cacheData = await cacheResponse.json();
+
+            // If we have a cached plan, show it directly
+            if (cacheData.plan && cacheData.plan.slides && cacheData.plan.slides.length > 0) {
+                console.log('Found cached plan:', cacheData.plan.slides.length, 'slides');
+                displayPlan(cacheData.plan);
+
+                planSection.classList.remove('hidden');
+                planSpinner.classList.add('hidden');
+                planContent.classList.remove('hidden');
+                resultsSection.classList.add('hidden');
+
+                planSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                showToast(`Loaded cached plan with ${cacheData.plan.slides.length} slides`, 'success');
+                planBtn.disabled = false;
+                planBtn.textContent = 'View Plan';
+
+                // Also check if videos exist to update that button
+                checkVideosExist();
+                return;
+            }
+        }
+
+        // No cached plan - generate new one
+        console.log('No cached plan found, generating...');
+        planBtn.textContent = 'Generating...';
+
+        // Show plan section with spinner
+        planSection.classList.remove('hidden');
+        planSpinner.classList.remove('hidden');
+        planContent.classList.add('hidden');
+
+        // Scroll to plan section so user can see the spinner
+        planSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        console.log('Calling API: POST /api/plan/' + currentJobId);
+
         const response = await fetch(`/api/plan/${currentJobId}`, {
             method: 'POST'
         });
@@ -297,6 +330,8 @@ planBtn.addEventListener('click', async () => {
         resultsSection.classList.add('hidden');
 
         showToast('Plan generated successfully!', 'success');
+        planBtn.disabled = false;
+        planBtn.textContent = 'View Plan';
         console.log('=== Plan Generation Complete ===');
     } catch (error) {
         console.error('Planning failed:', error);
@@ -307,6 +342,21 @@ planBtn.addEventListener('click', async () => {
         planBtn.textContent = 'Generate Plan';
     }
 });
+
+// Helper to check if videos exist and update button
+async function checkVideosExist() {
+    try {
+        const response = await fetch(`/api/kodisc/${currentJobId}/progress`);
+        if (response.ok) {
+            const data = await response.json();
+            if (data.status === 'complete' && data.results && data.results.length > 0) {
+                manimBtn.textContent = 'View Videos';
+            }
+        }
+    } catch (e) {
+        // Ignore errors
+    }
+}
 
 // Display Plan
 function displayPlan(plan) {
@@ -603,17 +653,53 @@ newUploadBtn.addEventListener('click', resetToUpload);
 newUploadBtnResults.addEventListener('click', resetToUpload);
 
 // Back to Plan button (from videos section)
-document.getElementById('back-to-plan-btn').addEventListener('click', () => {
+document.getElementById('back-to-plan-btn').addEventListener('click', async () => {
     manimSection.classList.add('hidden');
     planSection.classList.remove('hidden');
     planContent.classList.remove('hidden');
     planSpinner.classList.add('hidden');
+
+    // Check if videos already exist - if so, show "View Videos" button
+    manimBtn.disabled = false;
+    try {
+        const response = await fetch(`/api/kodisc/${currentJobId}/progress`);
+        if (response.ok) {
+            const data = await response.json();
+            if (data.status === 'complete' && data.results && data.results.length > 0) {
+                manimBtn.textContent = 'View Videos';
+            } else {
+                manimBtn.textContent = 'Generate Videos';
+            }
+        } else {
+            manimBtn.textContent = 'Generate Videos';
+        }
+    } catch (e) {
+        manimBtn.textContent = 'Generate Videos';
+    }
 });
 
 // Back to OCR Results button (from plan section)
-document.getElementById('back-to-results-btn').addEventListener('click', () => {
+document.getElementById('back-to-results-btn').addEventListener('click', async () => {
     planSection.classList.add('hidden');
     resultsSection.classList.remove('hidden');
+
+    // Check if plan already exists - if so, show "View Plan" button
+    planBtn.disabled = false;
+    try {
+        const response = await fetch(`/api/plan/${currentJobId}`);
+        if (response.ok) {
+            const data = await response.json();
+            if (data.plan && data.plan.slides && data.plan.slides.length > 0) {
+                planBtn.textContent = 'View Plan';
+            } else {
+                planBtn.textContent = 'Generate Plan';
+            }
+        } else {
+            planBtn.textContent = 'Generate Plan';
+        }
+    } catch (e) {
+        planBtn.textContent = 'Generate Plan';
+    }
 });
 
 // Status Update
