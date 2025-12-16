@@ -1650,29 +1650,29 @@ async def _generate_kodisc_videos_background(job_id: str):
             task["current_slide"] = slide_number
             task["current_title"] = title
 
-            # Build Kodisc-safe prompt with primitives wrapper + text fitting rules
+            # Build Kodisc-safe prompt with 3B1B motion emphasis
             kodisc_prefix = (
-                "Create a Manim scene. BLACK background. "
-                "PREVENT OVERFLOW: Use scale_to_fit_width(config.frame_width - 1) for text groups. "
-                "Use MathTex for equations. For word subscripts use \\\\text{} (e.g. R_{\\\\text{success}}). "
-                "Break long text into multiple lines. "
+                "Create a 3Blue1Brown-style Manim scene. BLACK background. "
+                "IMPORTANT: Use continuous transformations - morph, flow, grow animations. "
+                "Avoid static 'slide' layouts. Include at least 2 animations (Transform + movement). "
+                "Scale text to fit frame. "
             )
 
             # Primary prompt - use the visual description
             primary_prompt = kodisc_prefix + (visual_desc if visual_desc else f"Simple diagram for: {title}")
 
-            # Simplified prompt - fallback if primary fails (no complex transforms)
+            # Simplified prompt - fallback with some animation
             simplified_prompt = (
                 f"Create a Manim scene. BLACK background. "
-                f"Show title '{title[:30]}' at top in WHITE. "
-                f"Below, show 3 key points as bullet text, fading in one by one."
+                f"Show title '{title[:30]}' at top using Write animation. "
+                f"Below, show a simple shape that transforms or grows to illustrate the concept."
             )
 
             # Guaranteed fallback - always renders
             fallback_prompt = (
                 f"Create a simple Manim scene. BLACK background. "
-                f"Center the text '{title[:25]}' in WHITE using font_size=48. "
-                f"Use FadeIn animation."
+                f"Center the text '{title[:25]}' in WHITE. "
+                f"Use Write animation, then FadeOut."
             )
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
