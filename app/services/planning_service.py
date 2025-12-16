@@ -92,7 +92,7 @@ Output ONLY valid JSON (no markdown blocks):
     {
       "slide_number": 1,
       "title": "Short Title",
-      "visual_type": "transformation",
+      "visual_type": "diagram",
       "visual_description": "Start: ... Transform: ... End: ...",
       "key_points": ["Point 1", "Point 2"],
       "voiceover_script": "3-4 conversational sentences.",
@@ -100,7 +100,10 @@ Output ONLY valid JSON (no markdown blocks):
       "transition_note": "Connection to next slide"
     }
   ]
-}"""
+}
+
+CRITICAL: visual_type MUST be one of: diagram, equation, graph, comparison, text_reveal, timeline
+Use transformations inside visual_description, NOT as visual_type."""
 
 
 class PlanningService:
@@ -188,6 +191,13 @@ Remember:
 
             plan_data = json.loads(response_text.strip())
             logger.info(f"Parsed plan with {len(plan_data.get('slides', []))} slides")
+
+            # Safety net: fix invalid visual_type values before Pydantic validation
+            valid_types = {'text_reveal', 'diagram', 'equation', 'graph', 'comparison', 'timeline', 'icon_grid', 'code_walkthrough'}
+            for slide in plan_data.get('slides', []):
+                if slide.get('visual_type') not in valid_types:
+                    logger.warning(f"Fixing invalid visual_type '{slide.get('visual_type')}' -> 'diagram'")
+                    slide['visual_type'] = 'diagram'
 
             plan = PresentationPlan(**plan_data)
             return plan
