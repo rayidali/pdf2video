@@ -10,11 +10,8 @@ Pricing:
 - Image Generation: 3 credits = $0.0075 per image
 - Video Rendering: 1 credit = $0.0025
 
-Key features:
-- No self-hosting required (hosted API)
-- Returns video URL directly
-- Also returns generated Manim code
-- Supports voiceover generation
+IMPORTANT: Kodisc requires multipart/form-data, NOT json or urlencoded.
+Use files= parameter in httpx to send proper multipart.
 """
 
 import httpx
@@ -25,7 +22,7 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 KODISC_API_URL = "https://api.kodisc.com"
-DEFAULT_TIMEOUT = 120  # 2 minutes - video generation can take time
+DEFAULT_TIMEOUT = 180  # 3 minutes - video generation can take time
 
 
 @dataclass
@@ -75,7 +72,7 @@ class KodiscService:
         Generate a video from a text prompt using Kodisc API.
 
         Args:
-            prompt: Text description of the animation to create
+            prompt: Text description of the animation to create (keep it simple!)
             aspect_ratio: "16:9" (default) or "9:16" (mobile)
             voiceover: Whether to add AI voiceover
             voice: Azure voice ID for voiceover (e.g., "en-US-AriaNeural")
@@ -95,32 +92,37 @@ class KodiscService:
             )
 
         logger.info(f"Generating video via Kodisc API...")
-        logger.debug(f"Prompt: {prompt[:200]}...")
+        logger.info(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
 
         try:
-            # Kodisc uses FormData, not JSON
-            form_data = {
-                "apiKey": self.api_key,
-                "prompt": prompt,
-                "aspectRatio": aspect_ratio,
-                "fps": str(fps),
+            # IMPORTANT: Kodisc requires multipart/form-data
+            # Use files= with (None, value) tuples to send as multipart
+            files = {
+                "apiKey": (None, self.api_key),
+                "prompt": (None, prompt),
+                "aspectRatio": (None, aspect_ratio),
+                "fps": (None, str(fps)),
             }
 
             if voiceover:
-                form_data["voiceover"] = "true"
-                form_data["voice"] = voice
+                files["voiceover"] = (None, "true")
+                files["voice"] = (None, voice)
 
             if colors:
                 import json
-                form_data["colors"] = json.dumps(colors)
+                files["colors"] = (None, json.dumps(colors))
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     f"{KODISC_API_URL}/generate/video",
-                    data=form_data  # FormData, not json
+                    files=files  # multipart/form-data
                 )
 
                 data = response.json()
+
+                # Log the full response for debugging (without API key)
+                debug_data = {k: v for k, v in data.items() if k != "apiKey"}
+                logger.info(f"Kodisc response: {debug_data}")
 
                 if data.get("success"):
                     video_url = data.get("video")
@@ -134,6 +136,7 @@ class KodiscService:
                 else:
                     error_msg = data.get("error", "Unknown error from Kodisc API")
                     logger.error(f"Kodisc API error: {error_msg}")
+                    logger.error(f"Full response: {debug_data}")
                     return KodiscResult(
                         success=False,
                         error=error_msg
@@ -153,6 +156,8 @@ class KodiscService:
             )
         except Exception as e:
             logger.error(f"Kodisc API error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return KodiscResult(
                 success=False,
                 error=str(e)
@@ -178,20 +183,21 @@ class KodiscService:
         logger.info(f"Generating image via Kodisc API...")
 
         try:
-            form_data = {
-                "apiKey": self.api_key,
-                "prompt": prompt,
-                "aspectRatio": aspect_ratio,
+            # Use files= for multipart/form-data
+            files = {
+                "apiKey": (None, self.api_key),
+                "prompt": (None, prompt),
+                "aspectRatio": (None, aspect_ratio),
             }
 
             if colors:
                 import json
-                form_data["colors"] = json.dumps(colors)
+                files["colors"] = (None, json.dumps(colors))
 
             async with httpx.AsyncClient(timeout=60) as client:
                 response = await client.post(
                     f"{KODISC_API_URL}/generate/image",
-                    data=form_data
+                    files=files
                 )
 
                 data = response.json()

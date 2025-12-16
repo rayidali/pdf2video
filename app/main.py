@@ -1649,14 +1649,12 @@ async def _generate_kodisc_videos_background(job_id: str):
             task["current_slide"] = slide_number
             task["current_title"] = title
 
-            # Build prompt for Kodisc - use the visual description directly
-            prompt = f"""Create an educational animation for: {title}
-
-{visual_desc}
-
-Make it clear, visually appealing, and suitable for a presentation."""
+            # Send the visual description directly to Kodisc
+            # The planning service now generates simple, Manim-compatible descriptions
+            prompt = visual_desc if visual_desc else f"Create a simple diagram for: {title}"
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
+            logger.info(f"[Kodisc] Prompt: {prompt[:100]}...")
 
             result = await kodisc_service.generate_video(
                 prompt=prompt,
