@@ -156,6 +156,7 @@
                             <pre id="plan-json" class="markdown-raw"></pre>
                         </div>
                         <div class="results-actions">
+                            <button id="back-to-results-btn" class="btn">Back to OCR</button>
                             <button id="copy-plan-btn" class="btn">Copy JSON</button>
                             <button id="manim-btn" class="btn btn-dark">Generate Videos</button>
                         </div>
@@ -163,27 +164,28 @@
                 </div>
             </section>
 
-            <!-- Manim Code Section -->
+            <!-- Videos Section -->
             <section id="manim-section" class="card hidden">
                 <div class="card-header">
                     <div class="card-dots">
                         <span class="card-dot"></span>
                         <span class="card-dot"></span>
                     </div>
-                    <span class="card-title">slides/*.py</span>
+                    <span class="card-title">videos/*.mp4</span>
                 </div>
                 <div class="card-body">
-                    <h2>Manim Animation Code</h2>
+                    <h2>Generated Videos</h2>
                     <div id="manim-spinner" class="spinner hidden">
                         <div class="spinner-circle"></div>
-                        <p>Generating Manim code for each slide... This may take a few minutes.</p>
+                        <p>Generating videos via Kodisc... This may take a few minutes.</p>
                     </div>
                     <div id="manim-content" class="hidden">
                         <div class="manim-header">
-                            <p>Generated <span id="manim-slides-count"></span> slide animations</p>
+                            <p>Generated <span id="manim-slides-count"></span> video clips</p>
                         </div>
                         <div id="manim-slides-container" class="slides-container"></div>
                         <div class="results-actions">
+                            <button id="back-to-plan-btn" class="btn">Back to Plan</button>
                             <button id="new-upload-btn" class="btn btn-dark">New Upload</button>
                         </div>
                     </div>

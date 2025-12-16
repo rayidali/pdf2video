@@ -357,21 +357,50 @@ manimBtn.addEventListener('click', async () => {
         return;
     }
 
-    console.log('=== Starting Video Generation via Kodisc API ===');
+    console.log('=== Video Generation via Kodisc API ===');
     console.log('Job ID:', currentJobId);
 
     manimBtn.disabled = true;
-    manimBtn.textContent = 'Starting...';
-
-    // Show manim section with spinner
-    manimSection.classList.remove('hidden');
-    manimSpinner.classList.remove('hidden');
-    manimContent.classList.add('hidden');
-
-    // Scroll to manim section so user can see the spinner
-    manimSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    manimBtn.textContent = 'Checking...';
 
     try {
+        // First check if videos already exist (cached)
+        console.log('Checking for cached videos...');
+        const cacheResponse = await fetch(`/api/kodisc/${currentJobId}/progress`);
+
+        if (cacheResponse.ok) {
+            const cacheData = await cacheResponse.json();
+
+            // If we have cached results, show them directly
+            if (cacheData.status === 'complete' && cacheData.results && cacheData.results.length > 0) {
+                console.log('Found cached videos:', cacheData.results.length);
+                displayVideoResults(cacheData.results);
+
+                manimSection.classList.remove('hidden');
+                manimSpinner.classList.add('hidden');
+                manimContent.classList.remove('hidden');
+                planSection.classList.add('hidden');
+
+                manimSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                showToast(`Loaded ${cacheData.successful} cached videos`, 'success');
+                manimBtn.disabled = false;
+                manimBtn.textContent = 'Generate Videos';
+                return;
+            }
+        }
+
+        // No cached videos - start generation
+        console.log('No cached videos found, starting generation...');
+
+        // Show manim section with spinner
+        manimSection.classList.remove('hidden');
+        manimSpinner.classList.remove('hidden');
+        manimContent.classList.add('hidden');
+
+        // Scroll to manim section so user can see the spinner
+        manimSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
         // Start background generation via Kodisc API
         console.log('Calling API: POST /api/kodisc/' + currentJobId + '/start');
         const response = await fetch(`/api/kodisc/${currentJobId}/start`, {
@@ -573,6 +602,20 @@ newUploadBtn.addEventListener('click', resetToUpload);
 // New Upload button in results section
 newUploadBtnResults.addEventListener('click', resetToUpload);
 
+// Back to Plan button (from videos section)
+document.getElementById('back-to-plan-btn').addEventListener('click', () => {
+    manimSection.classList.add('hidden');
+    planSection.classList.remove('hidden');
+    planContent.classList.remove('hidden');
+    planSpinner.classList.add('hidden');
+});
+
+// Back to OCR Results button (from plan section)
+document.getElementById('back-to-results-btn').addEventListener('click', () => {
+    planSection.classList.add('hidden');
+    resultsSection.classList.remove('hidden');
+});
+
 // Status Update
 function updateStatus(status) {
     jobStatusEl.textContent = status.charAt(0).toUpperCase() + status.slice(1);
@@ -680,14 +723,16 @@ async function restoreJob(jobId, completedStep) {
 
         // Navigate to the appropriate section based on completed step
         if (data.has_manim) {
-            // Show Manim section with existing code
-            const manimResponse = await fetch(`/api/manim/${jobId}`);
-            const manimData = await manimResponse.json();
-            displayManimCode(manimData.slides);
+            // Show Videos section with existing video results
+            const videoResponse = await fetch(`/api/kodisc/${jobId}/progress`);
+            const videoData = await videoResponse.json();
+            if (videoData.results && videoData.results.length > 0) {
+                displayVideoResults(videoData.results);
+            }
             manimContent.classList.remove('hidden');
             manimSpinner.classList.add('hidden');
             manimSection.classList.remove('hidden');
-            showToast(`Restored job ${jobId} - Manim code ready!`, 'success');
+            showToast(`Restored job ${jobId} - Videos ready!`, 'success');
         } else if (data.has_plan) {
             // Show Plan section with existing plan
             const planResponse = await fetch(`/api/plan/${jobId}`);
@@ -716,7 +761,7 @@ async function restoreJob(jobId, completedStep) {
         planBtn.disabled = false;
         planBtn.textContent = 'Generate Plan';
         manimBtn.disabled = false;
-        manimBtn.textContent = 'Generate Manim Code';
+        manimBtn.textContent = 'Generate Videos';
 
     } catch (error) {
         console.error('Failed to restore job:', error);
