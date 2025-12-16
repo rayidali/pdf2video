@@ -350,14 +350,14 @@ copyPlanBtn.addEventListener('click', async () => {
     }
 });
 
-// Generate Manim Code - NOW USING GM API
+// Generate Videos - USING KODISC API
 manimBtn.addEventListener('click', async () => {
     if (!currentJobId) {
         console.error('No job ID found');
         return;
     }
 
-    console.log('=== Starting Video Generation via GM API ===');
+    console.log('=== Starting Video Generation via Kodisc API ===');
     console.log('Job ID:', currentJobId);
 
     manimBtn.disabled = true;
@@ -372,9 +372,9 @@ manimBtn.addEventListener('click', async () => {
     manimSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     try {
-        // Start background generation via GM API
-        console.log('Calling API: POST /api/generate/' + currentJobId + '/start');
-        const response = await fetch(`/api/generate/${currentJobId}/start`, {
+        // Start background generation via Kodisc API
+        console.log('Calling API: POST /api/kodisc/' + currentJobId + '/start');
+        const response = await fetch(`/api/kodisc/${currentJobId}/start`, {
             method: 'POST'
         });
 
@@ -388,10 +388,11 @@ manimBtn.addEventListener('click', async () => {
 
         const data = await response.json();
         console.log('Generation started:', data);
+        console.log('Estimated cost:', data.estimated_cost);
 
         // Poll for progress
         manimBtn.textContent = `Generating 0/${data.total_slides}...`;
-        await pollGenerationProgress(currentJobId, data.total_slides);
+        await pollKodiscProgress(currentJobId, data.total_slides);
 
     } catch (error) {
         console.error('Video generation failed:', error);
@@ -403,13 +404,13 @@ manimBtn.addEventListener('click', async () => {
     }
 });
 
-// Poll for generation progress
-async function pollGenerationProgress(jobId, totalSlides) {
-    const pollInterval = 2000; // 2 seconds
+// Poll for Kodisc generation progress
+async function pollKodiscProgress(jobId, totalSlides) {
+    const pollInterval = 3000; // 3 seconds (Kodisc takes a bit longer)
 
     while (true) {
         try {
-            const response = await fetch(`/api/generate/${jobId}/progress`);
+            const response = await fetch(`/api/kodisc/${jobId}/progress`);
             const progress = await response.json();
 
             console.log('Progress:', progress);
@@ -431,7 +432,7 @@ async function pollGenerationProgress(jobId, totalSlides) {
                 planSection.classList.add('hidden');
 
                 showToast(`Videos generated! ${progress.successful} successful, ${progress.failed} failed`, 'success');
-                console.log('=== Video Generation Complete ===');
+                console.log('=== Kodisc Video Generation Complete ===');
                 manimBtn.textContent = 'Generate Videos';
                 return;
             }
