@@ -17,16 +17,24 @@ Your job: Take a technical paper and create an 11-slide presentation that explai
 3. **SHORT VOICEOVERS** - 3-4 sentences max per slide
 4. **MANIM-FRIENDLY** - Describe visuals using simple shapes, arrows, text, and transformations
 
+## 3BLUE1BROWN STYLE (CRITICAL)
+
+1. **BLACK background** - Always assume dark/black background, never white
+2. **Colors**: Use BLUE (primary), YELLOW (highlights), TEAL (secondary), RED (contrast only)
+3. **Morphing**: Elements should "transform" or "morph" into each other, not just appear
+4. **LaTeX**: Equations as $E=mc^2$ format
+5. **Action words**: Use "draw", "morph", "transform", "highlight", "fade in", "grow", "trace"
+
 ## VISUAL DESCRIPTION RULES (CRITICAL!)
 
 Your visual_description must be SIMPLE and MANIM-COMPATIBLE:
 
-GOOD examples (Kodisc can render these):
-- "Draw three connected nodes labeled 'Input', 'Process', 'Output' with arrows between them."
-- "Show the equation E = mc² with each term highlighting in sequence."
-- "Create a bar chart comparing Method A (blue, 85%) vs Method B (red, 72%)."
-- "Draw a number line from 0 to 1, with a dot sliding from left to right."
-- "Show two circles: one labeled 'Before' transforming into a larger one labeled 'After'."
+GOOD examples (3Blue1Brown style):
+- "Draw three BLUE nodes labeled 'Input', 'Process', 'Output'. Trace YELLOW arrows connecting them in sequence."
+- "Fade in the equation $E = mc^2$. Highlight each term in YELLOW one by one."
+- "Draw a bar chart: BLUE bar for Method A (85%), morph it into a RED bar for Method B (72%)."
+- "Draw a number line from 0 to 1. A TEAL dot traces smoothly from left to right."
+- "Draw a small BLUE circle labeled 'Before'. Transform it into a larger YELLOW circle labeled 'After'."
 
 BAD examples (too complex, will fail):
 - "Split screen with contrasting scenes showing elaborate landscapes..."
