@@ -213,46 +213,81 @@ class GenerativeManimService:
         self,
         prompt: str,
         class_name: str = "GeneratedScene",
-        engine: CodeGenEngine = "anthropic"
+        engine: CodeGenEngine = "anthropic",
+        aspect_ratio: str = "16:9"
     ) -> RenderResult:
         """
-        Full pipeline: Generate code from description, then render to video.
+        Full pipeline: Text prompt → Video (single API call).
 
-        This is the main method for going from visual description to video.
+        Uses GM API's /v1/video/generation endpoint which handles
+        both code generation and rendering in one request.
 
         Args:
             prompt: Text description of the animation
-            class_name: Name for the generated Scene class
-            engine: LLM engine for code generation
+            class_name: Name for the generated Scene class (for our tracking)
+            engine: LLM engine for code generation ("openai" or "anthropic")
+            aspect_ratio: Video aspect ratio ("16:9", "1:1", or "9:16")
 
         Returns:
             RenderResult with video URL and generated code
         """
-        # Step 1: Generate code
-        code_result = await self.generate_code(prompt, engine)
+        import time
+        start_time = time.time()
 
-        if not code_result.success:
+        payload = {
+            "prompt": prompt,
+            "engine": engine,
+            "aspect_ratio": aspect_ratio
+        }
+
+        logger.info(f"Generating video via GM API /v1/video/generation (engine: {engine})...")
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.api_url}/v1/video/generation",
+                    json=payload
+                )
+
+                render_time = time.time() - start_time
+
+                if response.status_code == 200:
+                    data = response.json()
+                    logger.info(f"Video generated successfully in {render_time:.1f}s")
+                    return RenderResult(
+                        success=True,
+                        video_url=data.get("video_url"),
+                        video_path=data.get("video_path"),
+                        code=data.get("code"),
+                        render_time=render_time
+                    )
+                else:
+                    error_data = response.json() if response.content else {}
+                    error_msg = error_data.get("detail") or error_data.get("error") or f"HTTP {response.status_code}"
+                    logger.error(f"Video generation failed: {error_msg}")
+                    return RenderResult(
+                        success=False,
+                        error_message=error_msg
+                    )
+
+        except httpx.TimeoutException:
+            logger.error(f"Video generation timeout after {self.timeout}s")
             return RenderResult(
                 success=False,
-                error_message=f"Code generation failed: {code_result.error_message}"
+                error_message=f"Video generation timed out after {self.timeout} seconds"
             )
-
-        code = code_result.code
-
-        # Step 2: Extract class name from generated code (or use provided)
-        # The GM API might generate its own class names
-        import re
-        class_match = re.search(r'class\s+(\w+)\s*\(\s*Scene\s*\)', code)
-        if class_match:
-            actual_class_name = class_match.group(1)
-        else:
-            actual_class_name = class_name
-
-        # Step 3: Render the code
-        render_result = await self.render_code(code, actual_class_name)
-        render_result.code = code  # Include the generated code in result
-
-        return render_result
+        except httpx.ConnectError as e:
+            logger.error(f"Cannot connect to GM API: {e}")
+            return RenderResult(
+                success=False,
+                error_message=f"Cannot connect to GM API at {self.api_url}. Is it running?"
+            )
+        except Exception as e:
+            logger.error(f"Video generation error: {e}")
+            return RenderResult(
+                success=False,
+                error_message=str(e)
+            )
 
     # ========================================
     # RENDERING (existing methods)

@@ -4,7 +4,8 @@ import shutil
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import asyncio
+from fastapi import FastAPI, File, HTTPException, UploadFile, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -14,6 +15,7 @@ from app.services.ocr_service import MistralOCRService
 from app.services.planning_service import PlanningService
 from app.services.manim_service import ManimService
 from app.services.render_service import GenerativeManimService
+from app.services.kodisc_service import KodiscService
 
 # Configure logging
 logging.basicConfig(
@@ -33,6 +35,7 @@ ocr_service = MistralOCRService(settings.MISTRAL_API_KEY)
 planning_service = PlanningService(settings.ANTHROPIC_API_KEY)
 manim_service = ManimService(settings.ANTHROPIC_API_KEY)
 render_service = GenerativeManimService(settings.GENERATIVE_MANIM_API_URL)
+kodisc_service = KodiscService(settings.KODISC_API_KEY)
 
 # Ensure directories exist
 settings.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -45,6 +48,9 @@ if static_dir.exists():
 
 # In-memory job storage (replace with Redis in production)
 jobs: dict[str, JobStatus] = {}
+
+# Track background generation tasks
+generation_tasks: dict[str, dict] = {}  # job_id -> {status, progress, results, cancel_flag}
 
 
 @app.get("/")
@@ -1333,3 +1339,551 @@ async def generate_custom_video(prompt: str, engine: str = "anthropic"):
             "error": result.error_message,
             "engine_used": engine
         }
+
+
+# ============================================
+# BACKGROUND VIDEO GENERATION (Non-blocking)
+# Use these for long-running generation tasks
+# ============================================
+
+async def _generate_videos_background(job_id: str, engine: str):
+    """Background task to generate all videos for a job."""
+    task = generation_tasks[job_id]
+
+    try:
+        # Load the plan
+        plan_path = settings.OUTPUTS_DIR / job_id / "plan.json"
+        plan_data = json.loads(plan_path.read_text())
+        slides = plan_data.get("slides", [])
+
+        task["total_slides"] = len(slides)
+
+        # Create slides directory
+        slides_dir = settings.OUTPUTS_DIR / job_id / "slides"
+        slides_dir.mkdir(parents=True, exist_ok=True)
+
+        gm_manifest = []
+
+        for i, slide in enumerate(slides):
+            # Check for cancellation
+            if task.get("cancel_flag"):
+                task["status"] = "cancelled"
+                logger.info(f"Generation cancelled for job {job_id}")
+                return
+
+            slide_number = slide["slide_number"]
+            visual_desc = slide.get("visual_description", "")
+            title = slide.get("title", f"Slide {slide_number}")
+            key_points = slide.get("key_points", [])
+
+            task["current_slide"] = slide_number
+            task["current_title"] = title
+
+            # Build prompt
+            prompt = f"""Create a Manim animation for a presentation slide titled "{title}".
+
+Visual Description:
+{visual_desc}
+
+Key Points to Visualize:
+{chr(10).join(f"- {point}" for point in key_points)}
+
+Requirements:
+- Create a clear, educational animation
+- Use appropriate colors and layout
+- Include smooth transitions between elements
+"""
+
+            logger.info(f"[BG] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
+
+            result = await render_service.generate_and_render(
+                prompt=prompt,
+                class_name=f"Slide{slide_number:03d}",
+                engine=engine
+            )
+
+            slide_id = f"s{slide_number:03d}"
+
+            if result.success:
+                # Save generated code
+                code_path = slides_dir / f"{slide_id}_gm.py"
+                if result.code:
+                    code_path.write_text(result.code)
+
+                slide_result = {
+                    "slide_number": slide_number,
+                    "slide_id": slide_id,
+                    "title": title,
+                    "status": "success",
+                    "video_url": result.video_url,
+                    "render_time": result.render_time
+                }
+                task["successful"] += 1
+
+                gm_manifest.append({
+                    "slide_id": slide_id,
+                    "slide_number": slide_number,
+                    "title": title,
+                    "class_name": f"Slide{slide_number:03d}",
+                    "code_path": str(code_path),
+                    "video_url": result.video_url,
+                    "video_path": result.video_path,
+                    "source": "generative_manim_api"
+                })
+            else:
+                slide_result = {
+                    "slide_number": slide_number,
+                    "slide_id": slide_id,
+                    "title": title,
+                    "status": "failed",
+                    "error": result.error_message
+                }
+                task["failed"] += 1
+
+            task["results"].append(slide_result)
+            task["completed_slides"] = i + 1
+
+        # Save GM manifest
+        gm_manifest_path = slides_dir / "gm_manifest.json"
+        gm_manifest_path.write_text(json.dumps(gm_manifest, indent=2))
+
+        task["status"] = "complete"
+        task["manifest_path"] = str(gm_manifest_path)
+        logger.info(f"[BG] Generation complete for job {job_id}: {task['successful']} success, {task['failed']} failed")
+
+    except Exception as e:
+        task["status"] = "error"
+        task["error"] = str(e)
+        logger.error(f"[BG] Generation error for job {job_id}: {e}")
+
+
+@app.post("/api/generate/{job_id}/start")
+async def start_video_generation(job_id: str, background_tasks: BackgroundTasks, engine: str = "anthropic"):
+    """
+    Start video generation in the background.
+
+    This returns immediately and processes slides in the background.
+    Use /api/generate/{job_id}/progress to check status.
+    Use /api/generate/{job_id}/cancel to stop generation.
+
+    Args:
+        job_id: The job ID
+        engine: LLM engine to use ("anthropic" or "openai")
+
+    Returns:
+        Task ID and status URL
+    """
+    # Check if already running
+    if job_id in generation_tasks and generation_tasks[job_id]["status"] == "running":
+        return {
+            "job_id": job_id,
+            "status": "already_running",
+            "message": "Generation already in progress. Check /api/generate/{job_id}/progress"
+        }
+
+    # Check if render API is available
+    if not await render_service.check_availability():
+        raise HTTPException(
+            status_code=503,
+            detail="Generative Manim API not available. Start it first."
+        )
+
+    # Load the plan to validate
+    plan_path = settings.OUTPUTS_DIR / job_id / "plan.json"
+    if not plan_path.exists():
+        raise HTTPException(status_code=404, detail="Plan not found. Create a plan first.")
+
+    plan_data = json.loads(plan_path.read_text())
+    slides = plan_data.get("slides", [])
+
+    if not slides:
+        raise HTTPException(status_code=400, detail="Plan has no slides")
+
+    # Initialize task tracker
+    generation_tasks[job_id] = {
+        "status": "running",
+        "engine": engine,
+        "total_slides": len(slides),
+        "completed_slides": 0,
+        "current_slide": 0,
+        "current_title": "",
+        "successful": 0,
+        "failed": 0,
+        "results": [],
+        "cancel_flag": False,
+        "error": None
+    }
+
+    # Start background task
+    background_tasks.add_task(_generate_videos_background, job_id, engine)
+
+    logger.info(f"Started background generation for job {job_id} with {len(slides)} slides")
+
+    return {
+        "job_id": job_id,
+        "status": "started",
+        "total_slides": len(slides),
+        "progress_url": f"/api/generate/{job_id}/progress",
+        "cancel_url": f"/api/generate/{job_id}/cancel"
+    }
+
+
+@app.get("/api/generate/{job_id}/progress")
+async def get_generation_progress(job_id: str):
+    """
+    Get the current progress of background video generation.
+
+    Returns:
+        Current status, progress percentage, and results so far
+    """
+    if job_id not in generation_tasks:
+        raise HTTPException(status_code=404, detail="No generation task found. Start one first.")
+
+    task = generation_tasks[job_id]
+
+    progress_pct = 0
+    if task["total_slides"] > 0:
+        progress_pct = round(task["completed_slides"] / task["total_slides"] * 100, 1)
+
+    return {
+        "job_id": job_id,
+        "status": task["status"],
+        "progress_percent": progress_pct,
+        "completed_slides": task["completed_slides"],
+        "total_slides": task["total_slides"],
+        "current_slide": task["current_slide"],
+        "current_title": task["current_title"],
+        "successful": task["successful"],
+        "failed": task["failed"],
+        "results": task["results"],
+        "error": task.get("error")
+    }
+
+
+@app.post("/api/generate/{job_id}/cancel")
+async def cancel_video_generation(job_id: str):
+    """
+    Cancel an in-progress video generation.
+
+    The current slide will finish, but no new slides will start.
+
+    Returns:
+        Cancellation status
+    """
+    if job_id not in generation_tasks:
+        raise HTTPException(status_code=404, detail="No generation task found.")
+
+    task = generation_tasks[job_id]
+
+    if task["status"] != "running":
+        return {
+            "job_id": job_id,
+            "status": task["status"],
+            "message": f"Task is not running (status: {task['status']})"
+        }
+
+    task["cancel_flag"] = True
+    logger.info(f"Cancellation requested for job {job_id}")
+
+    return {
+        "job_id": job_id,
+        "status": "cancelling",
+        "message": "Cancellation requested. Current slide will finish, then generation will stop.",
+        "completed_so_far": task["completed_slides"]
+    }
+
+
+# ============================================
+# KODISC API VIDEO GENERATION
+# Hosted solution - no self-hosting needed
+# Cost: $0.025 per video (10 credits)
+# ============================================
+
+# Track Kodisc generation tasks separately
+kodisc_tasks: dict[str, dict] = {}
+
+
+@app.get("/api/kodisc/status")
+async def kodisc_status():
+    """
+    Check if Kodisc API is configured and ready.
+    """
+    is_configured = kodisc_service.is_configured()
+
+    return {
+        "configured": is_configured,
+        "message": "Kodisc API ready" if is_configured else "Add KODISC_API_KEY to .env",
+        "cost_per_video": "$0.025 (10 credits)"
+    }
+
+
+async def _generate_kodisc_videos_background(job_id: str):
+    """Background task to generate all videos for a job using Kodisc."""
+    task = kodisc_tasks[job_id]
+
+    try:
+        # Load the plan
+        plan_path = settings.OUTPUTS_DIR / job_id / "plan.json"
+        plan_data = json.loads(plan_path.read_text())
+        slides = plan_data.get("slides", [])
+
+        task["total_slides"] = len(slides)
+
+        # Create videos directory for this job
+        videos_dir = settings.OUTPUTS_DIR / job_id / "videos"
+        videos_dir.mkdir(parents=True, exist_ok=True)
+
+        video_manifest = []
+
+        for i, slide in enumerate(slides):
+            # Check for cancellation
+            if task.get("cancel_flag"):
+                task["status"] = "cancelled"
+                logger.info(f"Kodisc generation cancelled for job {job_id}")
+                break
+
+            slide_number = slide["slide_number"]
+            visual_desc = slide.get("visual_description", "")
+            title = slide.get("title", f"Slide {slide_number}")
+
+            task["current_slide"] = slide_number
+            task["current_title"] = title
+
+            # Build prompt for Kodisc - use the visual description directly
+            prompt = f"""Create an educational animation for: {title}
+
+{visual_desc}
+
+Make it clear, visually appealing, and suitable for a presentation."""
+
+            logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
+
+            result = await kodisc_service.generate_video(
+                prompt=prompt,
+                aspect_ratio="16:9",
+                voiceover=False
+            )
+
+            slide_id = f"s{slide_number:03d}"
+
+            if result.success:
+                # Save the generated code for reference
+                if result.code:
+                    code_path = videos_dir / f"{slide_id}_kodisc.py"
+                    code_path.write_text(result.code)
+
+                slide_result = {
+                    "slide_number": slide_number,
+                    "slide_id": slide_id,
+                    "title": title,
+                    "status": "success",
+                    "video_url": result.video_url
+                }
+                task["successful"] += 1
+
+                video_manifest.append({
+                    "slide_id": slide_id,
+                    "slide_number": slide_number,
+                    "title": title,
+                    "video_url": result.video_url,
+                    "code_path": str(videos_dir / f"{slide_id}_kodisc.py") if result.code else None,
+                    "source": "kodisc"
+                })
+            else:
+                slide_result = {
+                    "slide_number": slide_number,
+                    "slide_id": slide_id,
+                    "title": title,
+                    "status": "failed",
+                    "error": result.error
+                }
+                task["failed"] += 1
+
+            task["results"].append(slide_result)
+            task["completed_slides"] = i + 1
+
+        # Save video manifest (so user can revisit without regenerating)
+        manifest_path = videos_dir / "kodisc_manifest.json"
+        manifest_path.write_text(json.dumps(video_manifest, indent=2))
+
+        # Also save the full task results
+        results_path = videos_dir / "generation_results.json"
+        results_path.write_text(json.dumps({
+            "job_id": job_id,
+            "total_slides": task["total_slides"],
+            "successful": task["successful"],
+            "failed": task["failed"],
+            "results": task["results"]
+        }, indent=2))
+
+        task["status"] = "complete"
+        task["manifest_path"] = str(manifest_path)
+        logger.info(f"[Kodisc] Generation complete for job {job_id}: {task['successful']} success, {task['failed']} failed")
+
+    except Exception as e:
+        task["status"] = "error"
+        task["error"] = str(e)
+        logger.error(f"[Kodisc] Generation error for job {job_id}: {e}")
+
+
+@app.post("/api/kodisc/{job_id}/start")
+async def start_kodisc_generation(job_id: str, background_tasks: BackgroundTasks):
+    """
+    Start video generation using Kodisc API (background task).
+
+    This uses the visual_description from each slide in the plan
+    and sends it to Kodisc to generate Manim videos.
+
+    Cost: ~$0.025 per slide (10 credits)
+
+    Returns immediately - poll /api/kodisc/{job_id}/progress for status.
+    """
+    # Check if Kodisc is configured
+    if not kodisc_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Kodisc API key not configured. Add KODISC_API_KEY to .env"
+        )
+
+    # Check if already running
+    if job_id in kodisc_tasks and kodisc_tasks[job_id]["status"] == "running":
+        return {
+            "job_id": job_id,
+            "status": "already_running",
+            "message": "Generation already in progress. Check /api/kodisc/{job_id}/progress"
+        }
+
+    # Load the plan to validate
+    plan_path = settings.OUTPUTS_DIR / job_id / "plan.json"
+    if not plan_path.exists():
+        raise HTTPException(status_code=404, detail="Plan not found. Create a plan first.")
+
+    plan_data = json.loads(plan_path.read_text())
+    slides = plan_data.get("slides", [])
+
+    if not slides:
+        raise HTTPException(status_code=400, detail="Plan has no slides")
+
+    # Estimate cost
+    estimated_cost = len(slides) * 0.025
+
+    # Initialize task tracker
+    kodisc_tasks[job_id] = {
+        "status": "running",
+        "total_slides": len(slides),
+        "completed_slides": 0,
+        "current_slide": 0,
+        "current_title": "",
+        "successful": 0,
+        "failed": 0,
+        "results": [],
+        "cancel_flag": False,
+        "error": None
+    }
+
+    # Start background task
+    background_tasks.add_task(_generate_kodisc_videos_background, job_id)
+
+    logger.info(f"Started Kodisc generation for job {job_id} with {len(slides)} slides (~${estimated_cost:.2f})")
+
+    return {
+        "job_id": job_id,
+        "status": "started",
+        "total_slides": len(slides),
+        "estimated_cost": f"${estimated_cost:.2f}",
+        "progress_url": f"/api/kodisc/{job_id}/progress",
+        "cancel_url": f"/api/kodisc/{job_id}/cancel"
+    }
+
+
+@app.get("/api/kodisc/{job_id}/progress")
+async def get_kodisc_progress(job_id: str):
+    """
+    Get the current progress of Kodisc video generation.
+    """
+    if job_id not in kodisc_tasks:
+        # Check if there's a saved result on disk
+        results_path = settings.OUTPUTS_DIR / job_id / "videos" / "generation_results.json"
+        if results_path.exists():
+            saved_results = json.loads(results_path.read_text())
+            return {
+                "job_id": job_id,
+                "status": "complete",
+                "from_cache": True,
+                **saved_results
+            }
+        raise HTTPException(status_code=404, detail="No Kodisc generation task found. Start one first.")
+
+    task = kodisc_tasks[job_id]
+
+    progress_pct = 0
+    if task["total_slides"] > 0:
+        progress_pct = round(task["completed_slides"] / task["total_slides"] * 100, 1)
+
+    return {
+        "job_id": job_id,
+        "status": task["status"],
+        "progress_percent": progress_pct,
+        "completed_slides": task["completed_slides"],
+        "total_slides": task["total_slides"],
+        "current_slide": task["current_slide"],
+        "current_title": task["current_title"],
+        "successful": task["successful"],
+        "failed": task["failed"],
+        "results": task["results"],
+        "error": task.get("error")
+    }
+
+
+@app.post("/api/kodisc/{job_id}/cancel")
+async def cancel_kodisc_generation(job_id: str):
+    """
+    Cancel an in-progress Kodisc video generation.
+    """
+    if job_id not in kodisc_tasks:
+        raise HTTPException(status_code=404, detail="No Kodisc generation task found.")
+
+    task = kodisc_tasks[job_id]
+
+    if task["status"] != "running":
+        return {
+            "job_id": job_id,
+            "status": task["status"],
+            "message": f"Task is not running (status: {task['status']})"
+        }
+
+    task["cancel_flag"] = True
+    logger.info(f"Kodisc cancellation requested for job {job_id}")
+
+    return {
+        "job_id": job_id,
+        "status": "cancelling",
+        "message": "Cancellation requested. Current slide will finish.",
+        "completed_so_far": task["completed_slides"]
+    }
+
+
+@app.get("/api/kodisc/{job_id}/videos")
+async def get_kodisc_videos(job_id: str):
+    """
+    Get all generated Kodisc videos for a job.
+
+    This loads from disk cache, so you can revisit without regenerating.
+    """
+    manifest_path = settings.OUTPUTS_DIR / job_id / "videos" / "kodisc_manifest.json"
+
+    if not manifest_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No Kodisc videos found. Generate them first with POST /api/kodisc/{job_id}/start"
+        )
+
+    manifest = json.loads(manifest_path.read_text())
+
+    return {
+        "job_id": job_id,
+        "total_videos": len(manifest),
+        "videos": manifest,
+        "source": "kodisc",
+        "cached": True
+    }

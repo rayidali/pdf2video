@@ -350,18 +350,18 @@ copyPlanBtn.addEventListener('click', async () => {
     }
 });
 
-// Generate Manim Code
+// Generate Videos - USING KODISC API
 manimBtn.addEventListener('click', async () => {
     if (!currentJobId) {
         console.error('No job ID found');
         return;
     }
 
-    console.log('=== Starting Manim Code Generation ===');
+    console.log('=== Starting Video Generation via Kodisc API ===');
     console.log('Job ID:', currentJobId);
 
     manimBtn.disabled = true;
-    manimBtn.textContent = 'Generating...';
+    manimBtn.textContent = 'Starting...';
 
     // Show manim section with spinner
     manimSection.classList.remove('hidden');
@@ -371,10 +371,10 @@ manimBtn.addEventListener('click', async () => {
     // Scroll to manim section so user can see the spinner
     manimSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-    console.log('Calling API: POST /api/manim/' + currentJobId);
-
     try {
-        const response = await fetch(`/api/manim/${currentJobId}`, {
+        // Start background generation via Kodisc API
+        console.log('Calling API: POST /api/kodisc/' + currentJobId + '/start');
+        const response = await fetch(`/api/kodisc/${currentJobId}/start`, {
             method: 'POST'
         });
 
@@ -383,34 +383,113 @@ manimBtn.addEventListener('click', async () => {
         if (!response.ok) {
             const error = await response.json();
             console.error('API Error:', error);
-            throw new Error(error.detail || 'Manim generation failed');
+            throw new Error(error.detail || 'Failed to start video generation');
         }
 
         const data = await response.json();
-        console.log('Manim code received:', data);
-        console.log('Number of slides generated:', data.slides_generated);
+        console.log('Generation started:', data);
+        console.log('Estimated cost:', data.estimated_cost);
 
-        // Fetch full code for each slide
-        const fullDataResponse = await fetch(`/api/manim/${currentJobId}`);
-        const fullData = await fullDataResponse.json();
+        // Poll for progress
+        manimBtn.textContent = `Generating 0/${data.total_slides}...`;
+        await pollKodiscProgress(currentJobId, data.total_slides);
 
-        displayManimCode(fullData.slides);
-
-        manimSpinner.classList.add('hidden');
-        manimContent.classList.remove('hidden');
-        planSection.classList.add('hidden');
-
-        showToast('Manim code generated successfully!', 'success');
-        console.log('=== Manim Code Generation Complete ===');
     } catch (error) {
-        console.error('Manim generation failed:', error);
+        console.error('Video generation failed:', error);
         showToast(error.message, 'error');
         manimSpinner.classList.add('hidden');
         manimSection.classList.add('hidden');
         manimBtn.disabled = false;
-        manimBtn.textContent = 'Generate Manim Code';
+        manimBtn.textContent = 'Generate Videos';
     }
 });
+
+// Poll for Kodisc generation progress
+async function pollKodiscProgress(jobId, totalSlides) {
+    const pollInterval = 3000; // 3 seconds (Kodisc takes a bit longer)
+
+    while (true) {
+        try {
+            const response = await fetch(`/api/kodisc/${jobId}/progress`);
+            const progress = await response.json();
+
+            console.log('Progress:', progress);
+
+            // Update button with progress
+            manimBtn.textContent = `Generating ${progress.completed_slides}/${totalSlides}...`;
+
+            // Update spinner text if it exists
+            const spinnerText = manimSpinner.querySelector('p');
+            if (spinnerText) {
+                spinnerText.textContent = `Generating slide ${progress.current_slide}: ${progress.current_title || '...'}`;
+            }
+
+            if (progress.status === 'complete') {
+                // Generation complete - show results
+                displayVideoResults(progress.results);
+                manimSpinner.classList.add('hidden');
+                manimContent.classList.remove('hidden');
+                planSection.classList.add('hidden');
+
+                showToast(`Videos generated! ${progress.successful} successful, ${progress.failed} failed`, 'success');
+                console.log('=== Kodisc Video Generation Complete ===');
+                manimBtn.textContent = 'Generate Videos';
+                return;
+            }
+
+            if (progress.status === 'error' || progress.status === 'cancelled') {
+                throw new Error(progress.error || `Generation ${progress.status}`);
+            }
+
+            // Wait before polling again
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+        } catch (error) {
+            console.error('Progress polling error:', error);
+            throw error;
+        }
+    }
+}
+
+// Display Video Results (instead of just code)
+function displayVideoResults(results) {
+    manimSlidesCount.textContent = results.length;
+
+    manimSlidesContainer.innerHTML = '';
+    results.forEach((slide) => {
+        const slideEl = document.createElement('div');
+        slideEl.className = 'slide-card manim-slide';
+
+        const statusBadge = slide.status === 'success'
+            ? '<span class="status-badge complete">✓ Video Ready</span>'
+            : `<span class="status-badge failed">✗ Failed</span>`;
+
+        const videoSection = slide.status === 'success' && slide.video_url
+            ? `<div class="video-container">
+                <video controls width="100%">
+                    <source src="${slide.video_url}" type="video/mp4">
+                    Your browser does not support video playback.
+                </video>
+                <a href="${slide.video_url}" target="_blank" class="btn-small">Open Video</a>
+               </div>`
+            : slide.error
+                ? `<p class="error-msg">Error: ${slide.error}</p>`
+                : '';
+
+        slideEl.innerHTML = `
+            <div class="slide-header">
+                <span class="slide-num">${slide.slide_id}</span>
+                <h4>${slide.title}</h4>
+                ${statusBadge}
+            </div>
+            <div class="slide-body">
+                ${videoSection}
+                ${slide.render_time ? `<p class="slide-duration">Rendered in ${slide.render_time.toFixed(1)}s</p>` : ''}
+            </div>
+        `;
+        manimSlidesContainer.appendChild(slideEl);
+    });
+}
 
 // Display Manim Code
 function displayManimCode(slides) {
@@ -478,7 +557,7 @@ function resetToUpload() {
     planBtn.disabled = false;
     planBtn.textContent = 'Generate Plan';
     manimBtn.disabled = false;
-    manimBtn.textContent = 'Generate Manim Code';
+    manimBtn.textContent = 'Generate Videos';
 
     // Show upload section
     resultsSection.classList.add('hidden');
