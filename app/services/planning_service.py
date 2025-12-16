@@ -30,8 +30,10 @@ Every visual MUST be a TRANSFORMATION, not a static picture:
 - Labels: MAX 12 characters (abbreviate if needed)
 - Titles: MAX 5 words
 - Key points: MAX 8 words each
-- For equations: Use simple notation like "R = R1 + R2" NOT "R = R_{success} + R_{tool}"
-- Avoid LaTeX curly braces {} in equations - they cause render failures
+- Body text: MAX 6 words per line, break longer text into multiple lines
+- For equations with word subscripts: Use \\text{} wrapper
+  GOOD: "$R_{\\text{success}}$"
+  BAD: "$R_{success}$" (renders incorrectly)
 
 ## VISUAL DESCRIPTION FORMAT (MANDATORY)
 
@@ -56,7 +58,7 @@ Example 4 - Showing learning:
 "Start: A dot at a fork with three equal paths. Transform: One path gradually thickens and turns YELLOW while others fade. End: The thick YELLOW path is labeled 'Learned Best Choice'."
 
 Example 5 - Showing math:
-"Start: Text 'Loss = L1 + L2' fades in centered. Transform: 'L1' highlights YELLOW, then 'L2' highlights TEAL. End: Both terms glow together."
+"Start: MathTex '$L = L_1 + L_2$' fades in centered. Transform: '$L_1$' highlights YELLOW, then '$L_2$' highlights TEAL. End: Both terms glow together."
 
 ## BAD EXAMPLES (these FAIL)
 

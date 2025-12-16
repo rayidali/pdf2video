@@ -1652,9 +1652,10 @@ async def _generate_kodisc_videos_background(job_id: str):
 
             # Build Kodisc-safe prompt with primitives wrapper + text fitting rules
             kodisc_prefix = (
-                "Create a Manim scene using ONLY primitives (Circle, Rectangle, Line, Arrow, Text). "
-                "BLACK background. Keep ALL text within frame. Use font_size <= 42 for labels. "
-                "Abbreviate long text. "
+                "Create a Manim scene. BLACK background. "
+                "PREVENT OVERFLOW: Use scale_to_fit_width(config.frame_width - 1) for text groups. "
+                "Use MathTex for equations. For word subscripts use \\\\text{} (e.g. R_{\\\\text{success}}). "
+                "Break long text into multiple lines. "
             )
 
             # Primary prompt - use the visual description
