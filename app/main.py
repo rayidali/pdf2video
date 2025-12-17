@@ -1618,42 +1618,71 @@ kodisc_tasks: dict[str, dict] = {}
 
 
 # ============================================
-# PROMPT SANITIZER (based on ChatGPT analysis)
-# The Kodisc website has hidden safety layers.
-# These words trigger complex physics/collision code that crashes.
+# AGGRESSIVE PROMPT SANITIZER (Keyword Assassin)
+# Based on ChatGPT + Gemini analysis
+# These words/phrases trigger complex code that crashes Kodisc
 # ============================================
-RISKY_WORDS = {
-    "repeatedly": "twice",
-    "bouncing": "moving",
-    "hitting": "reaching",
-    "colliding": "meeting",
-    "randomly": "sequentially",
-    "walls": "lines",
-    "barriers": "lines",
-    "barrier": "line",
+RISKY_PHRASES = {
+    # PHYSICS TRIGGERS → GEOMETRY REPLACEMENTS
+    "trying to reach": "moving toward",
+    "try to reach": "move toward",
+    "tries to reach": "moves toward",
+    "reaches": "moves to",
+    "reaching": "moving to",
+    "reach": "move to",
+    "hitting": "next to",
+    "hit": "touch",
+    "bouncing": "moving back and forth",
+    "bounce": "move back",
+    "colliding": "touching",
+    "collide": "touch",
     "collision": "contact",
+    "barriers": "red lines",
+    "barrier": "red line",
+    "walls": "lines",
+    "wall": "line",
     "physics": "motion",
-    "spark": "glow",
-    "shake": "pulse",
+    "repeatedly": "twice",
+    "repeat": "do twice",
+    "loop": "sequence",
+    "randomly": "one by one",
+    "random": "sequential",
+    "explosion": "expanding circle",
     "explode": "expand",
-    "burst": "grow",
+    "spark": "small dot",
+    "sparks": "small dots",
     "particles": "dots",
-    "loop infinitely": "loop once",
+    "shake": "pulse",
+    "burst": "grow",
     "forever": "twice",
+    "infinitely": "twice",
+    "stuck": "stopped",
+    "fails": "stops",
+    "fail": "stop",
+    "rigid": "simple",
+    "complex": "simple",
+    # GOAL-SEEKING TRIGGERS
+    "goal": "target dot",
+    "target": "yellow dot",
+    "destination": "end point",
+    "pathfinding": "movement",
+    "navigate": "move",
+    "avoid": "go around",
 }
 
 def sanitize_prompt(text: str) -> str:
-    """Replace risky words that cause Kodisc to generate crashy code."""
+    """Aggressively replace risky words/phrases that crash Kodisc."""
     result = text.lower()
-    for bad, good in RISKY_WORDS.items():
+    # Replace longer phrases first (order matters!)
+    for bad, good in sorted(RISKY_PHRASES.items(), key=lambda x: -len(x[0])):
         result = result.replace(bad, good)
     return result
 
-# Light safety wrapper - scene constraints, NOT Manim code instructions
+# STRONGER safety wrapper - explicitly forbid physics
 SAFETY_WRAPPER = (
-    "Create a simple animation. "
-    "Use basic shapes only. "
-    "Keep motion smooth and short. "
+    "Create a simple 2D animation using only Circle, Square, Arrow, Line, and Text. "
+    "No physics simulation. No collision detection. No pathfinding. "
+    "Just move shapes with smooth transitions. "
     "Scene: "
 )
 
