@@ -1678,13 +1678,38 @@ def sanitize_prompt(text: str) -> str:
         result = result.replace(bad, good)
     return result
 
-# STRONGER safety wrapper - explicitly forbid physics
-SAFETY_WRAPPER = (
-    "Create a simple 2D animation using only Circle, Square, Arrow, Line, and Text. "
-    "No physics simulation. No collision detection. No pathfinding. "
-    "Just move shapes with smooth transitions. "
-    "Scene: "
-)
+
+# ============================================
+# WEBSITE-STYLE SYSTEM PROMPT (from Chrome DevTools inspection)
+# The Kodisc website uses a chat-style API with system+user messages.
+# The public API only accepts a single prompt, so we pack both into one.
+# ============================================
+SYSTEM_PROMPT = """SYSTEM:
+You are generating Manim code for an educational animation.
+Layout: SLIDE
+Style: 3Blue1Brown-like, black background, high contrast colors.
+
+RULES (follow exactly):
+- Use only: Circle, Rectangle, Line, Arrow, Dot, Text, VGroup
+- Use MathTex only for actual math equations
+- No randomness, no physics simulation, no collision detection
+- No bouncing, no particles, no sparks
+- Keep all objects inside the frame
+- Keep text labels short (under 20 chars)
+- Use smooth transitions: FadeIn, FadeOut, Transform, Write, GrowArrow
+- Maximum 15 objects total
+- Total animation under 10 seconds
+
+USER:
+"""
+
+# Default color palette (same as Kodisc website uses)
+KODISC_COLORS = {
+    "primary": "#58C4DD",      # Teal/cyan
+    "secondary": "#FC6255",    # Red/coral
+    "background": "#000000",   # Black
+    "text": "#FFFFFF"          # White
+}
 
 
 @app.get("/api/kodisc/status")
@@ -1743,42 +1768,48 @@ async def _generate_kodisc_videos_background(job_id: str):
             task["current_title"] = title
 
             # ============================================
-            # PROMPT STRATEGY (with sanitizer + safety wrapper)
+            # PROMPT STRATEGY (mimics Kodisc website)
             # ============================================
-            # 1. Sanitize: Replace risky words that crash Kodisc
-            # 2. Wrap: Add light safety prefix like the website does
+            # 1. Use SYSTEM+USER format (like the website's chat API)
+            # 2. Sanitize: Replace risky words that crash Kodisc
+            # 3. Always send colors (website always does)
             # ============================================
 
             # Sanitize the visual description (remove crashy words)
             safe_visual_desc = sanitize_prompt(visual_desc) if visual_desc else ""
 
-            # Primary prompt - sanitized + wrapped
-            primary_prompt = SAFETY_WRAPPER + (
+            # Primary prompt - SYSTEM+USER format like website
+            primary_prompt = SYSTEM_PROMPT + (
                 safe_visual_desc if safe_visual_desc
-                else f"a diagram explaining {title}"
+                else f"Create a simple diagram explaining {title}"
             )
 
-            # Middle-ground prompt - simple step-by-step visual
-            middle_prompt = (
-                f"Show the title '{title[:30]}' at the top, "
-                f"then draw 3 circles in a row with arrows connecting them"
+            # Middle-ground prompt - also use SYSTEM+USER format
+            middle_prompt = SYSTEM_PROMPT + (
+                f"Show the title '{title[:30]}' at the top using Text. "
+                f"Below it, draw 3 circles in a horizontal row. "
+                f"Connect the circles with arrows pointing right."
             )
 
-            # Guaranteed fallback - ultra-simple
-            fallback_prompt = f"Show the text '{title[:25]}' with a circle below it"
+            # Guaranteed fallback - ultra-simple but still with system prompt
+            fallback_prompt = SYSTEM_PROMPT + (
+                f"Show the text '{title[:25]}' centered on screen. "
+                f"Add a blue circle below the text."
+            )
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
-            logger.info(f"[Kodisc] Original visual_desc: {visual_desc[:100] if visual_desc else 'None'}...")
-            logger.info(f"[Kodisc] Sanitized prompt: {primary_prompt[:150]}...")
+            logger.info(f"[Kodisc] Original: {visual_desc[:80] if visual_desc else 'None'}...")
+            logger.info(f"[Kodisc] Sanitized USER section: {safe_visual_desc[:80] if safe_visual_desc else 'None'}...")
 
             # Delay between attempts (seconds)
-            ATTEMPT_DELAY = 2.0
+            ATTEMPT_DELAY = 3.0  # Increased for stability
 
-            # === ATTEMPT 1: Primary prompt ===
+            # === ATTEMPT 1: Primary prompt with colors ===
             result = await kodisc_service.generate_video(
                 prompt=primary_prompt,
                 aspect_ratio="16:9",
-                voiceover=False
+                voiceover=False,
+                colors=KODISC_COLORS  # Always send colors like website does
             )
             attempt = 1
             used_prompt = "primary"
@@ -1790,7 +1821,8 @@ async def _generate_kodisc_videos_background(job_id: str):
                 result = await kodisc_service.generate_video(
                     prompt=primary_prompt,
                     aspect_ratio="16:9",
-                    voiceover=False
+                    voiceover=False,
+                    colors=KODISC_COLORS
                 )
                 attempt = 2
 
@@ -1801,7 +1833,8 @@ async def _generate_kodisc_videos_background(job_id: str):
                 result = await kodisc_service.generate_video(
                     prompt=middle_prompt,
                     aspect_ratio="16:9",
-                    voiceover=False
+                    voiceover=False,
+                    colors=KODISC_COLORS
                 )
                 attempt = 3
                 used_prompt = "middle"
@@ -1813,7 +1846,8 @@ async def _generate_kodisc_videos_background(job_id: str):
                 result = await kodisc_service.generate_video(
                     prompt=fallback_prompt,
                     aspect_ratio="16:9",
-                    voiceover=False
+                    voiceover=False,
+                    colors=KODISC_COLORS
                 )
                 attempt = 4
                 used_prompt = "fallback"
