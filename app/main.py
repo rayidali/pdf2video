@@ -1650,34 +1650,28 @@ async def _generate_kodisc_videos_background(job_id: str):
             task["current_slide"] = slide_number
             task["current_title"] = title
 
-            # Build Kodisc-safe prompt with safety constraints to prevent crashes
+            # Natural prefix - describe style, not rigid rules
             kodisc_prefix = (
-                "Create a 3Blue1Brown-style Manim scene. BLACK background. "
-                "SAFETY RULES (CRITICAL): "
-                "1) MAX 30 objects - for 'many' items, use 5-10 and animate them. "
-                "2) Use Text() for English, MathTex ONLY for actual equations. "
-                "3) NO SVGMobject or ImageMobject - only Circle, Rectangle, Line, Arrow, Text. "
-                "4) Each animation RunTime <= 2 seconds. "
-                "5) For 'overload/many': draw 5 items moving fast, NOT 100 items. "
-                "Use morph, flow, grow animations. "
+                "Create a 3Blue1Brown-style Manim animation. BLACK background. "
+                "Use smooth transformations and flowing motion. "
+                "Keep it simple: basic shapes, short labels, max 20 objects. "
             )
 
-            # Primary prompt - use the visual description with safety prefix
-            primary_prompt = kodisc_prefix + (visual_desc if visual_desc else f"Simple diagram for: {title}")
+            # Primary prompt - natural visual description
+            primary_prompt = kodisc_prefix + (visual_desc if visual_desc else f"Illustrate the concept of '{title}' with a simple animated diagram.")
 
-            # Middle-ground prompt - still animated but simpler (not just text)
+            # Middle-ground prompt - concept-based, still animated
             middle_prompt = (
-                f"Create a Manim scene. BLACK background. MAX 20 objects. "
-                f"Show title '{title[:25]}' at top using Write animation. "
-                f"Below, draw a BLUE circle. Transform it into a YELLOW square. "
-                f"This represents the concept of '{title[:20]}'."
+                f"Create a simple Manim animation illustrating '{title[:30]}'. "
+                f"Show a blue shape that transforms or grows to represent the concept. "
+                f"Use smooth animations. BLACK background, max 10 objects."
             )
 
-            # Guaranteed fallback - always renders
+            # Guaranteed fallback - simple but still has motion
             fallback_prompt = (
-                f"Create a simple Manim scene. BLACK background. "
-                f"Center the text '{title[:25]}' in WHITE using Text(). "
-                f"Use Write animation."
+                f"Create a minimal Manim scene. BLACK background. "
+                f"Animate the title '{title[:25]}' appearing with a Write animation, "
+                f"then show a simple blue circle that pulses or grows."
             )
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
