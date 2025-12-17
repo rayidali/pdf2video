@@ -1621,6 +1621,9 @@ async def _generate_kodisc_videos_background(job_id: str):
     """Background task to generate all videos for a job using Kodisc."""
     task = kodisc_tasks[job_id]
 
+    # Delay between slides to avoid rate limiting / worker contention
+    SLIDE_DELAY_SECONDS = 2.0
+
     try:
         # Load the plan
         plan_path = settings.OUTPUTS_DIR / job_id / "plan.json"
@@ -1642,6 +1645,11 @@ async def _generate_kodisc_videos_background(job_id: str):
                 logger.info(f"Kodisc generation cancelled for job {job_id}")
                 break
 
+            # Add delay between slides (skip first slide)
+            if i > 0:
+                logger.info(f"[Kodisc] Waiting {SLIDE_DELAY_SECONDS}s before next slide...")
+                await asyncio.sleep(SLIDE_DELAY_SECONDS)
+
             slide_number = slide["slide_number"]
             visual_desc = slide.get("visual_description", "")
             title = slide.get("title", f"Slide {slide_number}")
@@ -1650,28 +1658,47 @@ async def _generate_kodisc_videos_background(job_id: str):
             task["current_slide"] = slide_number
             task["current_title"] = title
 
-            # Natural prefix - describe style, not rigid rules
-            kodisc_prefix = (
-                "Create a 3Blue1Brown-style Manim animation. BLACK background. "
-                "Use smooth transformations and flowing motion. "
-                "Keep it simple: basic shapes, short labels, max 20 objects. "
+            # ============================================
+            # PROMPT STRATEGY (based on ChatGPT + Gemini feedback)
+            # ============================================
+            # - Avoid vague "style" words like "3Blue1Brown style"
+            # - Be action-oriented: describe WHAT to draw, not style
+            # - Use Text() for words, MathTex() only for equations
+            # - Keep objects simple: Circle, Rectangle, Line, Arrow, Dot
+            # ============================================
+
+            # Render rules prefix - actionable, not stylistic
+            render_rules = (
+                "Create a Manim animation. BLACK background. "
+                "RULES: Use Text() for all words (never Tex for plain text). "
+                "Use only Circle, Rectangle, Line, Arrow, Dot, Text. "
+                "Use Transform, FadeIn, Write, GrowFromCenter for animations. "
+                "Max 20 objects. Keep labels under 15 characters. "
             )
 
-            # Primary prompt - natural visual description
-            primary_prompt = kodisc_prefix + (visual_desc if visual_desc else f"Illustrate the concept of '{title}' with a simple animated diagram.")
+            # Primary prompt - natural visual description with render rules
+            primary_prompt = render_rules + (
+                visual_desc if visual_desc
+                else f"Animate a diagram explaining '{title}' with shapes and labels."
+            )
 
-            # Middle-ground prompt - concept-based, still animated
+            # Middle-ground prompt - deterministic pattern (not vague)
+            # Pick a safe pattern based on slide content
             middle_prompt = (
-                f"Create a simple Manim animation illustrating '{title[:30]}'. "
-                f"Show a blue shape that transforms or grows to represent the concept. "
-                f"Use smooth animations. BLACK background, max 10 objects."
+                f"Create a Manim animation. BLACK background. "
+                f"Step 1: Show title '{title[:25]}' at top using Text(), then FadeOut. "
+                f"Step 2: Draw 3 blue circles in a row. "
+                f"Step 3: Draw arrows connecting them left to right. "
+                f"Step 4: Add short labels under each circle. "
+                f"Use only Text(), Circle, Arrow. Max 10 objects."
             )
 
-            # Guaranteed fallback - simple but still has motion
+            # Guaranteed fallback - ultra-simple, always works
             fallback_prompt = (
                 f"Create a minimal Manim scene. BLACK background. "
-                f"Animate the title '{title[:25]}' appearing with a Write animation, "
-                f"then show a simple blue circle that pulses or grows."
+                f"Use Text('{title[:20]}', font_size=48) at center, animate with Write(). "
+                f"Then add a blue Circle below it, animate with GrowFromCenter(). "
+                f"That's all - just title text and one circle."
             )
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
@@ -1687,26 +1714,39 @@ async def _generate_kodisc_videos_background(job_id: str):
             attempt = 1
             used_prompt = "primary"
 
-            # If primary fails, try middle-ground prompt (still has animation)
+            # If primary fails, retry SAME prompt once (transient failures)
             if not result.success:
-                logger.warning(f"[Kodisc] Primary prompt failed for slide {slide_number}, trying middle-ground...")
+                logger.warning(f"[Kodisc] Primary prompt failed for slide {slide_number}, retrying same prompt...")
+                await asyncio.sleep(1.5)  # Brief wait before retry
+                result = await kodisc_service.generate_video(
+                    prompt=primary_prompt,
+                    aspect_ratio="16:9",
+                    voiceover=False
+                )
+                attempt = 2
+
+            # If still fails, try middle-ground (deterministic pattern)
+            if not result.success:
+                logger.warning(f"[Kodisc] Primary retry failed for slide {slide_number}, trying pattern prompt...")
+                await asyncio.sleep(1.0)
                 result = await kodisc_service.generate_video(
                     prompt=middle_prompt,
                     aspect_ratio="16:9",
                     voiceover=False
                 )
-                attempt = 2
+                attempt = 3
                 used_prompt = "middle"
 
             # If middle also fails, try guaranteed fallback
             if not result.success:
-                logger.warning(f"[Kodisc] Middle prompt failed for slide {slide_number}, trying fallback...")
+                logger.warning(f"[Kodisc] Pattern prompt failed for slide {slide_number}, trying fallback...")
+                await asyncio.sleep(1.0)
                 result = await kodisc_service.generate_video(
                     prompt=fallback_prompt,
                     aspect_ratio="16:9",
                     voiceover=False
                 )
-                attempt = 3
+                attempt = 4
                 used_prompt = "fallback"
 
             slide_id = f"s{slide_number:03d}"
@@ -1742,15 +1782,15 @@ async def _generate_kodisc_videos_background(job_id: str):
                     "prompt_used": used_prompt
                 })
             else:
-                # All 3 attempts failed
-                logger.error(f"[Kodisc] Slide {slide_number} failed after all 3 attempts")
+                # All 4 attempts failed (primary, primary-retry, pattern, fallback)
+                logger.error(f"[Kodisc] Slide {slide_number} failed after all 4 attempts")
                 slide_result = {
                     "slide_number": slide_number,
                     "slide_id": slide_id,
                     "title": title,
                     "status": "failed",
                     "error": result.error,
-                    "attempts": 3
+                    "attempts": 4
                 }
                 task["failed"] += 1
 
