@@ -756,6 +756,69 @@ header {
     font-size: 14px;
 }
 
+/* Voiceover Section */
+.voiceover-header {
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid var(--black);
+}
+
+.voiceover-header p {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.audio-container {
+    margin-bottom: 12px;
+}
+
+.audio-container audio {
+    border: 2px solid var(--black);
+    margin-bottom: 8px;
+}
+
+.audio-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.audio-duration {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--gray-dark);
+    text-transform: uppercase;
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: var(--white);
+    border: 2px solid var(--black);
+    color: var(--black);
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.1s ease;
+}
+
+.btn-small:hover {
+    background: var(--black);
+    color: var(--white);
+}
+
+.voiceover-slide .slide-body {
+    padding: 16px;
+}
+
+.status-badge.skipped {
+    background: var(--gray);
+    color: var(--gray-dark);
+}
+
 /* Footer */
 footer {
     text-align: center;
