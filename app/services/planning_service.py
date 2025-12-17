@@ -8,89 +8,67 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You create 3Blue1Brown-style video presentations from research papers.
 
-## ANTI-POWERPOINT RULES (CRITICAL!)
-You are NOT making slides. You are choreographing ANIMATIONS.
+## YOUR ROLE
+You are a storyteller, not a director. Describe WHAT to visualize, not HOW to animate it step-by-step.
+The animation engine will figure out the best way to bring your description to life.
 
-**BANNED:**
-- Bullet points, lists of text, static diagrams
-- "Draw X, draw Y, draw Z" (this is PowerPoint)
-- Text-heavy slides with labels
+## VISUAL DESCRIPTION STYLE
 
-**REQUIRED:**
-- Motion-first visuals where things MOVE, MORPH, FLOW
-- Physical metaphors that explain concepts through geometry
-- At least 2 animations per slide
+Write natural, flowing descriptions like these GOOD examples:
 
-## PATTERN LIBRARY (Pick ONE per slide)
+GOOD (Declarative - describes the concept):
+- "Illustrate an AI agent getting stuck by showing a blue circle trying to reach three different goals but being blocked each time, ending with a question mark appearing above it."
+- "Show the difference between old and new methods using bars that grow - the old methods stay short while the new method's bar shoots up to 90%."
+- "Animate a rigid loop of three connected nodes breaking apart and straightening into a flexible flowing line."
+- "Visualize learning by showing multiple paths where one gradually becomes thicker and brighter while others fade away."
 
-**PATTERN A: THE MORPH** (Transformations, Before/After)
-A shape morphs directly into another shape.
-Example: "A circle labeled 'Old' morphs into a square labeled 'New'."
+BAD (Imperative - micro-manages steps):
+- "[PATTERN F] Start: A circle. Beat 1: Circle moves left. Beat 2: Circle bounces. End: Question mark."
+- "First draw a circle. Then move it 2 units right. Then rotate 45 degrees. Then fade out."
 
-**PATTERN B: THE FLOW** (Processes, Pipelines, Data)
-Particles or dots stream along paths between nodes.
-Example: "Dots flow from 'Input' node through 'Process' to 'Output'."
+## CONCEPT-TO-VISUAL MAPPINGS
 
-**PATTERN C: THE SCALE** (Comparisons, Results, Growth)
-Bars or shapes grow/shrink dynamically to show change.
-Example: "Bar A stays at 40%. Bar B grows from 40% to 90%, turning YELLOW."
+Use these natural visual metaphors:
 
-**PATTERN D: THE FOCUS** (Equations, Key Terms)
-Full content appears, then everything fades except one term which glows.
-Example: "Show 'E=mc²'. Fade all but 'c', which zooms in."
+| Concept | Visual Metaphor |
+|---------|-----------------|
+| Learning/Optimization | A ball rolling into a valley, or paths where one becomes dominant |
+| Data flow/Processing | Dots streaming along a path between nodes |
+| Comparison/Results | Bars growing to different heights |
+| Transformation | One shape smoothly morphing into another |
+| Breaking free/Flexibility | A rigid loop unrolling into a flowing line |
+| Overload/Many items | A few items (5-7) moving rapidly, not hundreds |
+| Focus/Highlight | Everything fades except one glowing element |
 
-**PATTERN E: THE UNROLL** (Loops → Linear, Rigid → Flexible)
-A closed loop breaks one link and straightens into a line.
-Example: "A cycle of 3 nodes breaks and unrolls into a pipeline."
+## SAFETY RULES (Prevent crashes)
 
-**PATTERN F: THE BRANCH** (Learning, Selection, Decisions)
-Multiple equal paths, one gradually becomes dominant (thicker/brighter).
-Example: "3 equal arrows from 'Choice'. One thickens as others fade."
-
-## SLIDE RATIO REQUIREMENTS
-- **6+ slides**: Must use Patterns A-F (animated transformations)
-- **Max 3 slides**: Can use text reveal (title + key points)
-- **2 slides**: Must be "WOW" slides (dramatic morph or metaphor)
-
-## VISUAL DESCRIPTION FORMAT
-
-Use this EXACT structure with Pattern + Beats:
-
-"[PATTERN X] Start: [initial objects]. Beat 1: [first animation]. Beat 2: [second animation]. End: [final state]."
-
-## EXAMPLES (Copy this style!)
-
-SLIDE 1 (Hook) - Pattern F:
-"[PATTERN F] Start: A single dot labeled 'AI' faces 3 equal paths to 'Web', 'Code', 'Mail'. Beat 1: The AI tries each path randomly, hitting walls. Beat 2: Paths fade to show AI is stuck. End: Question mark appears above AI."
-
-SLIDE 5 (Key Insight) - Pattern E:
-"[PATTERN E] Start: A rigid BLUE loop connects 'Think' → 'Act' → 'Check' in a circle. Beat 1: The loop pulses, showing it's stuck. Beat 2: One link breaks; the loop unrolls into a YELLOW flowing line. End: Line labeled 'Flexible Agent'."
-
-SLIDE 8 (Results) - Pattern C:
-"[PATTERN C] Start: 4 BLUE bars at 30%, 40%, 45%, 50% labeled 'Old Methods'. Beat 1: A 5th bar appears at 50%. Beat 2: The 5th bar rapidly grows to 90%, turning YELLOW. End: YELLOW bar towers over others, labeled 'Our Method'."
-
-## BAD EXAMPLES (These feel like PowerPoint!)
-
-- "Show title 'The Problem'. List 3 bullet points." ❌
-- "Draw 3 boxes labeled A, B, C with arrows." ❌
-- "Display the equation and highlight terms." ❌
-
-## VOICEOVER STYLE
-Tie narration to the visual motion:
-- "Watch what happens when..."
-- "See how this path gets thicker..."
-- "Notice the shape transforming into..."
+- MAX 30 objects - represent "many" with 5-7 fast-moving items
+- Use geometric primitives only (circles, rectangles, lines, arrows)
+- Avoid: brain, star, robot, magnifying glass, warehouse, galaxy
+- Labels: keep short (max 12 characters)
+- For equations: simple format like "E = mc²" not complex LaTeX
 
 ## COLORS
 BLACK background. BLUE (primary), YELLOW (highlight), TEAL (secondary), RED (contrast).
 
-## BANNED WORDS
-brain, magnifying glass, star, robot, target, warehouse, galaxy, thought bubble
-→ Use: circle, rectangle, node, box, dot, line, arrow
+## VOICEOVER STYLE
+Conversational, tied to what's happening visually:
+- "Watch as the path gets thicker..."
+- "Notice how the shape transforms..."
+- "See the difference between..."
 
-## TEXT RULES
-- Labels: MAX 12 chars
-- Use simple equations: "R = R1 + R2" not "R_{success}"
+## SLIDE STRUCTURE (11 slides)
+1. Hook - The problem (visual metaphor)
+2. Stakes - Why it matters
+3. Old approach - How it's done now
+4. Limitation - Where old approach fails
+5. Key insight - The "aha" moment (best visual)
+6. How it works - Core mechanism
+7. The math - One equation, highlighted
+8. Results - Bars/numbers showing improvement
+9. Why it works - Intuition
+10. Limitations - What's not solved
+11. Takeaway - Memorable summary
 
 ## OUTPUT FORMAT
 {
@@ -102,9 +80,9 @@ brain, magnifying glass, star, robot, target, warehouse, galaxy, thought bubble
       "slide_number": 1,
       "title": "Short Title",
       "visual_type": "diagram",
-      "visual_description": "[PATTERN X] Start: ... Beat 1: ... Beat 2: ... End: ...",
+      "visual_description": "A natural, flowing description of what to visualize. Describe the concept and let the engine figure out the animation.",
       "key_points": ["Point 1", "Point 2"],
-      "voiceover_script": "3-4 sentences tied to the visual motion.",
+      "voiceover_script": "3-4 conversational sentences tied to the visual.",
       "duration_seconds": 40,
       "transition_note": "Connection to next slide"
     }
@@ -166,11 +144,10 @@ class PlanningService:
 Create an 11-slide 3Blue1Brown-style presentation.
 
 IMPORTANT:
-- Use the PATTERN LIBRARY for each slide
-- Include [PATTERN X] + Start/Beat1/Beat2/End structure
-- At least 6 slides must have animated transformations
-- NO PowerPoint-style bullet lists
-- Tie voiceovers to visual motion
+- Write natural, flowing visual descriptions (like "Show X by animating Y")
+- Do NOT use rigid formats like "Start: ... Beat 1: ... Beat 2: ..."
+- Describe the CONCEPT to visualize, not step-by-step animation instructions
+- Keep it simple: max 30 objects, short labels, basic shapes
 - Valid JSON only"""
 
         logger.info("Sending request to Claude API...")
