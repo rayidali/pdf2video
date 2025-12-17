@@ -65,7 +65,7 @@ class KodiscService:
         aspect_ratio: str = "16:9",
         voiceover: bool = False,
         voice: str = "en-US-AriaNeural",
-        fps: int = 30,
+        fps: Optional[int] = None,  # Don't send fps - let Kodisc use default (likely 24)
         colors: Optional[dict] = None
     ) -> KodiscResult:
         """
@@ -101,8 +101,11 @@ class KodiscService:
                 "apiKey": (None, self.api_key),
                 "prompt": (None, prompt),
                 "aspectRatio": (None, aspect_ratio),
-                "fps": (None, str(fps)),
             }
+
+            # Only send fps if explicitly set (let Kodisc use its default otherwise)
+            if fps is not None:
+                files["fps"] = (None, str(fps))
 
             if voiceover:
                 files["voiceover"] = (None, "true")
