@@ -1673,65 +1673,48 @@ async def _generate_kodisc_videos_background(job_id: str):
             task["current_title"] = title
 
             # ============================================
-            # PROMPT STRATEGY (based on ChatGPT + Gemini feedback)
+            # PROMPT STRATEGY
             # ============================================
-            # - Avoid vague "style" words like "3Blue1Brown style"
-            # - Be action-oriented: describe WHAT to draw, not style
-            # - Use Text() for words, MathTex() only for equations
-            # - Keep objects simple: Circle, Rectangle, Line, Arrow, Dot
+            # Kodisc has its own fine-tuned model - DON'T add system prompts
+            # Just describe WHAT to animate, like their example: "Draw the function x^2"
+            # Keep prompts simple and visual-focused
             # ============================================
 
-            # Render rules prefix - actionable, not stylistic
-            render_rules = (
-                "Create a Manim animation. BLACK background. "
-                "RULES: Use Text() for all words (never Tex for plain text). "
-                "Use only Circle, Rectangle, Line, Arrow, Dot, Text. "
-                "Use Transform, FadeIn, Write, GrowFromCenter for animations. "
-                "Max 20 objects. Keep labels under 15 characters. "
-            )
-
-            # Primary prompt - natural visual description with render rules
-            primary_prompt = render_rules + (
+            # Primary prompt - just the visual description, no rules
+            # Let Kodisc's model handle the Manim details
+            primary_prompt = (
                 visual_desc if visual_desc
-                else f"Animate a diagram explaining '{title}' with shapes and labels."
+                else f"Animate a diagram explaining {title}"
             )
 
-            # Middle-ground prompt - deterministic pattern (not vague)
-            # Pick a safe pattern based on slide content
+            # Middle-ground prompt - simple step-by-step visual
             middle_prompt = (
-                f"Create a Manim animation. BLACK background. "
-                f"Step 1: Show title '{title[:25]}' at top using Text(), then FadeOut. "
-                f"Step 2: Draw 3 blue circles in a row. "
-                f"Step 3: Draw arrows connecting them left to right. "
-                f"Step 4: Add short labels under each circle. "
-                f"Use only Text(), Circle, Arrow. Max 10 objects."
+                f"Show the title '{title[:30]}' at the top, "
+                f"then draw 3 circles in a row with arrows connecting them"
             )
 
-            # Guaranteed fallback - ultra-simple, always works
-            fallback_prompt = (
-                f"Create a minimal Manim scene. BLACK background. "
-                f"Use Text('{title[:20]}', font_size=48) at center, animate with Write(). "
-                f"Then add a blue Circle below it, animate with GrowFromCenter(). "
-                f"That's all - just title text and one circle."
-            )
+            # Guaranteed fallback - ultra-simple
+            fallback_prompt = f"Show the text '{title[:25]}' with a circle below it"
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
-            logger.info(f"[Kodisc] Primary prompt: {primary_prompt[:120]}...")
+            logger.info(f"[Kodisc] Primary prompt: {primary_prompt[:150]}...")
 
-            # Try primary prompt first
+            # Delay between attempts (seconds)
+            ATTEMPT_DELAY = 2.0
+
+            # === ATTEMPT 1: Primary prompt ===
             result = await kodisc_service.generate_video(
                 prompt=primary_prompt,
                 aspect_ratio="16:9",
                 voiceover=False
             )
-
             attempt = 1
             used_prompt = "primary"
 
-            # If primary fails, retry SAME prompt once (transient failures)
+            # === ATTEMPT 2: Retry same prompt (transient failures) ===
             if not result.success:
-                logger.warning(f"[Kodisc] Primary prompt failed for slide {slide_number}, retrying same prompt...")
-                await asyncio.sleep(1.5)  # Brief wait before retry
+                logger.warning(f"[Kodisc] Attempt 1 failed, waiting {ATTEMPT_DELAY}s before retry...")
+                await asyncio.sleep(ATTEMPT_DELAY)
                 result = await kodisc_service.generate_video(
                     prompt=primary_prompt,
                     aspect_ratio="16:9",
@@ -1739,10 +1722,10 @@ async def _generate_kodisc_videos_background(job_id: str):
                 )
                 attempt = 2
 
-            # If still fails, try middle-ground (deterministic pattern)
+            # === ATTEMPT 3: Middle-ground prompt ===
             if not result.success:
-                logger.warning(f"[Kodisc] Primary retry failed for slide {slide_number}, trying pattern prompt...")
-                await asyncio.sleep(1.0)
+                logger.warning(f"[Kodisc] Attempt 2 failed, waiting {ATTEMPT_DELAY}s before middle prompt...")
+                await asyncio.sleep(ATTEMPT_DELAY)
                 result = await kodisc_service.generate_video(
                     prompt=middle_prompt,
                     aspect_ratio="16:9",
@@ -1751,10 +1734,10 @@ async def _generate_kodisc_videos_background(job_id: str):
                 attempt = 3
                 used_prompt = "middle"
 
-            # If middle also fails, try guaranteed fallback
+            # === ATTEMPT 4: Guaranteed fallback ===
             if not result.success:
-                logger.warning(f"[Kodisc] Pattern prompt failed for slide {slide_number}, trying fallback...")
-                await asyncio.sleep(1.0)
+                logger.warning(f"[Kodisc] Attempt 3 failed, waiting {ATTEMPT_DELAY}s before fallback...")
+                await asyncio.sleep(ATTEMPT_DELAY)
                 result = await kodisc_service.generate_video(
                     prompt=fallback_prompt,
                     aspect_ratio="16:9",

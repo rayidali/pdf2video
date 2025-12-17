@@ -112,22 +112,44 @@ class KodiscService:
                 import json
                 files["colors"] = (None, json.dumps(colors))
 
+            # === DEBUG: Log the exact payload being sent ===
+            debug_payload = {k: v[1][:100] + "..." if len(v[1]) > 100 else v[1]
+                           for k, v in files.items() if k != "apiKey"}
+            logger.info(f"[Kodisc] Sending payload: {debug_payload}")
+
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     f"{KODISC_API_URL}/generate/video",
                     files=files  # multipart/form-data
                 )
 
-                data = response.json()
+                # === CRITICAL: Check status code BEFORE parsing JSON ===
+                if response.status_code != 200:
+                    raw_text = response.text[:500]  # First 500 chars
+                    logger.error(f"[Kodisc] HTTP {response.status_code}: {raw_text}")
+                    return KodiscResult(
+                        success=False,
+                        error=f"HTTP {response.status_code}: {raw_text}"
+                    )
+
+                try:
+                    data = response.json()
+                except Exception as json_err:
+                    logger.error(f"[Kodisc] Failed to parse JSON: {json_err}")
+                    logger.error(f"[Kodisc] Raw response: {response.text[:500]}")
+                    return KodiscResult(
+                        success=False,
+                        error=f"Invalid JSON response: {response.text[:200]}"
+                    )
 
                 # Log the full response for debugging (without API key)
                 debug_data = {k: v for k, v in data.items() if k != "apiKey"}
-                logger.info(f"Kodisc response: {debug_data}")
+                logger.info(f"[Kodisc] Response: {debug_data}")
 
                 if data.get("success"):
                     video_url = data.get("video")
                     code = data.get("code")
-                    logger.info(f"Video generated successfully: {video_url}")
+                    logger.info(f"[Kodisc] Video generated successfully: {video_url}")
                     return KodiscResult(
                         success=True,
                         video_url=video_url,
@@ -135,8 +157,15 @@ class KodiscService:
                     )
                 else:
                     error_msg = data.get("error", "Unknown error from Kodisc API")
-                    logger.error(f"Kodisc API error: {error_msg}")
-                    logger.error(f"Full response: {debug_data}")
+                    # === CRITICAL: Log the Manim traceback if present ===
+                    if "logs" in data:
+                        logger.error(f"[Kodisc] MANIM LOGS: {data['logs']}")
+                    if "traceback" in data:
+                        logger.error(f"[Kodisc] TRACEBACK: {data['traceback']}")
+                    if "code" in data:
+                        # Sometimes they return the broken code even on failure
+                        logger.error(f"[Kodisc] BROKEN CODE: {data['code'][:500]}...")
+                    logger.error(f"[Kodisc] API error: {error_msg}")
                     return KodiscResult(
                         success=False,
                         error=error_msg
