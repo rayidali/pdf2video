@@ -1617,6 +1617,47 @@ async def cancel_video_generation(job_id: str):
 kodisc_tasks: dict[str, dict] = {}
 
 
+# ============================================
+# PROMPT SANITIZER (based on ChatGPT analysis)
+# The Kodisc website has hidden safety layers.
+# These words trigger complex physics/collision code that crashes.
+# ============================================
+RISKY_WORDS = {
+    "repeatedly": "twice",
+    "bouncing": "moving",
+    "hitting": "reaching",
+    "colliding": "meeting",
+    "randomly": "sequentially",
+    "walls": "lines",
+    "barriers": "lines",
+    "barrier": "line",
+    "collision": "contact",
+    "physics": "motion",
+    "spark": "glow",
+    "shake": "pulse",
+    "explode": "expand",
+    "burst": "grow",
+    "particles": "dots",
+    "loop infinitely": "loop once",
+    "forever": "twice",
+}
+
+def sanitize_prompt(text: str) -> str:
+    """Replace risky words that cause Kodisc to generate crashy code."""
+    result = text.lower()
+    for bad, good in RISKY_WORDS.items():
+        result = result.replace(bad, good)
+    return result
+
+# Light safety wrapper - scene constraints, NOT Manim code instructions
+SAFETY_WRAPPER = (
+    "Create a simple animation. "
+    "Use basic shapes only. "
+    "Keep motion smooth and short. "
+    "Scene: "
+)
+
+
 @app.get("/api/kodisc/status")
 async def kodisc_status():
     """
@@ -1673,18 +1714,19 @@ async def _generate_kodisc_videos_background(job_id: str):
             task["current_title"] = title
 
             # ============================================
-            # PROMPT STRATEGY
+            # PROMPT STRATEGY (with sanitizer + safety wrapper)
             # ============================================
-            # Kodisc has its own fine-tuned model - DON'T add system prompts
-            # Just describe WHAT to animate, like their example: "Draw the function x^2"
-            # Keep prompts simple and visual-focused
+            # 1. Sanitize: Replace risky words that crash Kodisc
+            # 2. Wrap: Add light safety prefix like the website does
             # ============================================
 
-            # Primary prompt - just the visual description, no rules
-            # Let Kodisc's model handle the Manim details
-            primary_prompt = (
-                visual_desc if visual_desc
-                else f"Animate a diagram explaining {title}"
+            # Sanitize the visual description (remove crashy words)
+            safe_visual_desc = sanitize_prompt(visual_desc) if visual_desc else ""
+
+            # Primary prompt - sanitized + wrapped
+            primary_prompt = SAFETY_WRAPPER + (
+                safe_visual_desc if safe_visual_desc
+                else f"a diagram explaining {title}"
             )
 
             # Middle-ground prompt - simple step-by-step visual
@@ -1697,7 +1739,8 @@ async def _generate_kodisc_videos_background(job_id: str):
             fallback_prompt = f"Show the text '{title[:25]}' with a circle below it"
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
-            logger.info(f"[Kodisc] Primary prompt: {primary_prompt[:150]}...")
+            logger.info(f"[Kodisc] Original visual_desc: {visual_desc[:100] if visual_desc else 'None'}...")
+            logger.info(f"[Kodisc] Sanitized prompt: {primary_prompt[:150]}...")
 
             # Delay between attempts (seconds)
             ATTEMPT_DELAY = 2.0
