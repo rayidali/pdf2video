@@ -186,7 +186,36 @@
                         <div id="manim-slides-container" class="slides-container"></div>
                         <div class="results-actions">
                             <button id="back-to-plan-btn" class="btn">Back to Plan</button>
-                            <button id="new-upload-btn" class="btn btn-dark">New Upload</button>
+                            <button id="voiceover-btn" class="btn btn-dark">Generate Voiceovers</button>
+                            <button id="new-upload-btn" class="btn">New Upload</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Voiceover Section -->
+            <section id="voiceover-section" class="card hidden">
+                <div class="card-header">
+                    <div class="card-dots">
+                        <span class="card-dot"></span>
+                        <span class="card-dot"></span>
+                    </div>
+                    <span class="card-title">audio/*.mp3</span>
+                </div>
+                <div class="card-body">
+                    <h2>Generated Voiceovers</h2>
+                    <div id="voiceover-spinner" class="spinner hidden">
+                        <div class="spinner-circle"></div>
+                        <p>Generating voiceovers via ElevenLabs... This may take a few minutes.</p>
+                    </div>
+                    <div id="voiceover-content" class="hidden">
+                        <div class="voiceover-header">
+                            <p>Generated <span id="voiceover-slides-count"></span> audio clips</p>
+                        </div>
+                        <div id="voiceover-slides-container" class="slides-container"></div>
+                        <div class="results-actions">
+                            <button id="back-to-videos-btn" class="btn">Back to Videos</button>
+                            <button id="new-upload-btn-voiceover" class="btn btn-dark">New Upload</button>
                         </div>
                     </div>
                 </div>

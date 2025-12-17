@@ -16,6 +16,8 @@ from app.services.planning_service import PlanningService
 from app.services.manim_service import ManimService
 from app.services.render_service import GenerativeManimService
 from app.services.kodisc_service import KodiscService
+from app.services.elevenlabs_service import ElevenLabsService
+from app.services.r2_service import R2Service
 
 # Configure logging
 logging.basicConfig(
@@ -36,6 +38,18 @@ planning_service = PlanningService(settings.ANTHROPIC_API_KEY)
 manim_service = ManimService(settings.ANTHROPIC_API_KEY)
 render_service = GenerativeManimService(settings.GENERATIVE_MANIM_API_URL)
 kodisc_service = KodiscService(settings.KODISC_API_KEY)
+elevenlabs_service = ElevenLabsService(
+    api_key=settings.ELEVENLABS_API_KEY,
+    voice_id=settings.ELEVENLABS_VOICE_ID,
+    model_id=settings.ELEVENLABS_MODEL_ID
+)
+r2_service = R2Service(
+    access_key_id=settings.R2_ACCESS_KEY_ID,
+    secret_access_key=settings.R2_SECRET_ACCESS_KEY,
+    endpoint_url=settings.R2_ENDPOINT_URL,
+    bucket_name=settings.R2_BUCKET_NAME,
+    public_url_base=settings.R2_PUBLIC_URL_BASE
+)
 
 # Ensure directories exist
 settings.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1980,5 +1994,341 @@ async def get_kodisc_videos(job_id: str):
         "total_videos": len(manifest),
         "videos": manifest,
         "source": "kodisc",
+        "cached": True
+    }
+
+
+# ============================================
+# VOICEOVER GENERATION (ElevenLabs + R2)
+# Generate audio voiceovers and upload to cloud
+# ============================================
+
+# Track voiceover generation tasks
+voiceover_tasks: dict[str, dict] = {}
+
+# Delay between voiceover generations (avoid rate limiting)
+VOICEOVER_DELAY_SECONDS = 1.5
+
+
+@app.get("/api/voiceover/status")
+async def voiceover_status():
+    """
+    Check if voiceover services are configured and ready.
+    """
+    elevenlabs_ok = elevenlabs_service.is_configured()
+    r2_ok = r2_service.is_configured()
+
+    return {
+        "elevenlabs_configured": elevenlabs_ok,
+        "r2_configured": r2_ok,
+        "ready": elevenlabs_ok and r2_ok,
+        "message": "Ready" if (elevenlabs_ok and r2_ok) else "Missing configuration - check ELEVENLABS_API_KEY and R2 credentials"
+    }
+
+
+async def _generate_voiceovers_background(job_id: str):
+    """Background task to generate voiceovers for all slides."""
+    task = voiceover_tasks[job_id]
+
+    try:
+        # Load the plan
+        plan_path = settings.OUTPUTS_DIR / job_id / "plan.json"
+        plan_data = json.loads(plan_path.read_text())
+        slides = plan_data.get("slides", [])
+
+        task["total_slides"] = len(slides)
+
+        # Create audio directory
+        audio_dir = settings.OUTPUTS_DIR / job_id / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+
+        audio_manifest = []
+
+        for i, slide in enumerate(slides):
+            # Check for cancellation
+            if task.get("cancel_flag"):
+                task["status"] = "cancelled"
+                logger.info(f"Voiceover generation cancelled for job {job_id}")
+                break
+
+            # Add delay between slides (skip first)
+            if i > 0:
+                logger.info(f"[Voiceover] Waiting {VOICEOVER_DELAY_SECONDS}s before next slide...")
+                await asyncio.sleep(VOICEOVER_DELAY_SECONDS)
+
+            slide_number = slide["slide_number"]
+            voiceover_script = slide.get("voiceover_script", "")
+            title = slide.get("title", f"Slide {slide_number}")
+
+            task["current_slide"] = slide_number
+            task["current_title"] = title
+
+            slide_id = f"s{slide_number:03d}"
+
+            if not voiceover_script or not voiceover_script.strip():
+                logger.warning(f"[Voiceover] Slide {slide_number} has no voiceover script, skipping...")
+                task["results"].append({
+                    "slide_number": slide_number,
+                    "slide_id": slide_id,
+                    "title": title,
+                    "status": "skipped",
+                    "error": "No voiceover script"
+                })
+                task["completed_slides"] = i + 1
+                continue
+
+            logger.info(f"[Voiceover] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
+
+            # Generate voiceover audio
+            result = await elevenlabs_service.generate_voiceover(voiceover_script)
+
+            if not result.success:
+                logger.error(f"[Voiceover] ElevenLabs failed for slide {slide_number}: {result.error}")
+                task["results"].append({
+                    "slide_number": slide_number,
+                    "slide_id": slide_id,
+                    "title": title,
+                    "status": "failed",
+                    "error": result.error
+                })
+                task["failed"] += 1
+                task["completed_slides"] = i + 1
+                continue
+
+            # Upload to R2
+            file_name = f"{job_id}_{slide_id}.mp3"
+            upload_result = r2_service.upload_file(
+                file_data=result.audio_data,
+                file_name=file_name,
+                content_type="audio/mpeg"
+            )
+
+            if not upload_result.success:
+                logger.error(f"[Voiceover] R2 upload failed for slide {slide_number}: {upload_result.error}")
+                task["results"].append({
+                    "slide_number": slide_number,
+                    "slide_id": slide_id,
+                    "title": title,
+                    "status": "failed",
+                    "error": f"Upload failed: {upload_result.error}"
+                })
+                task["failed"] += 1
+                task["completed_slides"] = i + 1
+                continue
+
+            # Success!
+            logger.info(f"[Voiceover] Slide {slide_number} complete: {upload_result.public_url}")
+
+            slide_result = {
+                "slide_number": slide_number,
+                "slide_id": slide_id,
+                "title": title,
+                "status": "success",
+                "audio_url": upload_result.public_url,
+                "audio_duration": result.duration_seconds,
+                "file_size_bytes": result.file_size_bytes
+            }
+
+            task["results"].append(slide_result)
+            task["successful"] += 1
+            task["completed_slides"] = i + 1
+
+            audio_manifest.append({
+                "slide_id": slide_id,
+                "slide_number": slide_number,
+                "title": title,
+                "audio_url": upload_result.public_url,
+                "audio_duration": result.duration_seconds,
+                "file_name": file_name
+            })
+
+        # Save audio manifest
+        manifest_path = audio_dir / "voiceover_manifest.json"
+        manifest_path.write_text(json.dumps(audio_manifest, indent=2))
+
+        # Save full results
+        results_path = audio_dir / "generation_results.json"
+        results_path.write_text(json.dumps({
+            "job_id": job_id,
+            "total_slides": task["total_slides"],
+            "successful": task["successful"],
+            "failed": task["failed"],
+            "results": task["results"]
+        }, indent=2))
+
+        task["status"] = "complete"
+        task["manifest_path"] = str(manifest_path)
+        logger.info(f"[Voiceover] Generation complete for job {job_id}: {task['successful']} success, {task['failed']} failed")
+
+    except Exception as e:
+        task["status"] = "error"
+        task["error"] = str(e)
+        logger.error(f"[Voiceover] Generation error for job {job_id}: {e}")
+
+
+@app.post("/api/voiceover/{job_id}/start")
+async def start_voiceover_generation(job_id: str, background_tasks: BackgroundTasks):
+    """
+    Start voiceover generation using ElevenLabs API (background task).
+
+    This uses the voiceover_script from each slide in the plan,
+    generates audio via ElevenLabs, and uploads to Cloudflare R2.
+
+    Returns immediately - poll /api/voiceover/{job_id}/progress for status.
+    """
+    # Check if services are configured
+    if not elevenlabs_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="ElevenLabs API key not configured. Add ELEVENLABS_API_KEY to .env"
+        )
+
+    if not r2_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="R2 storage not configured. Add R2 credentials to .env"
+        )
+
+    # Check if already running
+    if job_id in voiceover_tasks and voiceover_tasks[job_id]["status"] == "running":
+        return {
+            "job_id": job_id,
+            "status": "already_running",
+            "message": "Voiceover generation already in progress. Check /api/voiceover/{job_id}/progress"
+        }
+
+    # Load the plan to validate
+    plan_path = settings.OUTPUTS_DIR / job_id / "plan.json"
+    if not plan_path.exists():
+        raise HTTPException(status_code=404, detail="Plan not found. Create a plan first.")
+
+    plan_data = json.loads(plan_path.read_text())
+    slides = plan_data.get("slides", [])
+
+    if not slides:
+        raise HTTPException(status_code=400, detail="Plan has no slides")
+
+    # Count slides with voiceover scripts
+    slides_with_scripts = sum(1 for s in slides if s.get("voiceover_script", "").strip())
+
+    # Initialize task tracker
+    voiceover_tasks[job_id] = {
+        "status": "running",
+        "total_slides": len(slides),
+        "slides_with_scripts": slides_with_scripts,
+        "completed_slides": 0,
+        "current_slide": 0,
+        "current_title": "",
+        "successful": 0,
+        "failed": 0,
+        "results": [],
+        "cancel_flag": False,
+        "error": None
+    }
+
+    # Start background task
+    background_tasks.add_task(_generate_voiceovers_background, job_id)
+
+    logger.info(f"Started voiceover generation for job {job_id} with {slides_with_scripts}/{len(slides)} slides")
+
+    return {
+        "job_id": job_id,
+        "status": "started",
+        "total_slides": len(slides),
+        "slides_with_scripts": slides_with_scripts,
+        "progress_url": f"/api/voiceover/{job_id}/progress",
+        "cancel_url": f"/api/voiceover/{job_id}/cancel"
+    }
+
+
+@app.get("/api/voiceover/{job_id}/progress")
+async def get_voiceover_progress(job_id: str):
+    """
+    Get the current progress of voiceover generation.
+    """
+    if job_id not in voiceover_tasks:
+        # Check if there's a saved result on disk
+        results_path = settings.OUTPUTS_DIR / job_id / "audio" / "generation_results.json"
+        if results_path.exists():
+            saved_results = json.loads(results_path.read_text())
+            return {
+                "job_id": job_id,
+                "status": "complete",
+                "from_cache": True,
+                **saved_results
+            }
+        raise HTTPException(status_code=404, detail="No voiceover generation task found. Start one first.")
+
+    task = voiceover_tasks[job_id]
+
+    progress_pct = 0
+    if task["total_slides"] > 0:
+        progress_pct = round(task["completed_slides"] / task["total_slides"] * 100, 1)
+
+    return {
+        "job_id": job_id,
+        "status": task["status"],
+        "progress_percent": progress_pct,
+        "completed_slides": task["completed_slides"],
+        "total_slides": task["total_slides"],
+        "current_slide": task["current_slide"],
+        "current_title": task["current_title"],
+        "successful": task["successful"],
+        "failed": task["failed"],
+        "results": task["results"],
+        "error": task.get("error")
+    }
+
+
+@app.post("/api/voiceover/{job_id}/cancel")
+async def cancel_voiceover_generation(job_id: str):
+    """
+    Cancel an in-progress voiceover generation.
+    """
+    if job_id not in voiceover_tasks:
+        raise HTTPException(status_code=404, detail="No voiceover generation task found.")
+
+    task = voiceover_tasks[job_id]
+
+    if task["status"] != "running":
+        return {
+            "job_id": job_id,
+            "status": task["status"],
+            "message": f"Task is not running (status: {task['status']})"
+        }
+
+    task["cancel_flag"] = True
+    logger.info(f"Voiceover cancellation requested for job {job_id}")
+
+    return {
+        "job_id": job_id,
+        "status": "cancelling",
+        "message": "Cancellation requested. Current slide will finish.",
+        "completed_so_far": task["completed_slides"]
+    }
+
+
+@app.get("/api/voiceover/{job_id}/audio")
+async def get_voiceovers(job_id: str):
+    """
+    Get all generated voiceovers for a job.
+
+    This loads from disk cache, so you can revisit without regenerating.
+    """
+    manifest_path = settings.OUTPUTS_DIR / job_id / "audio" / "voiceover_manifest.json"
+
+    if not manifest_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No voiceovers found. Generate them first with POST /api/voiceover/{job_id}/start"
+        )
+
+    manifest = json.loads(manifest_path.read_text())
+
+    return {
+        "job_id": job_id,
+        "total_audio": len(manifest),
+        "audio_files": manifest,
+        "source": "elevenlabs",
         "cached": True
     }
