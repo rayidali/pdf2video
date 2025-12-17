@@ -916,87 +916,98 @@ newUploadBtnResults.addEventListener('click', resetToUpload);
 // VOICEOVER GENERATION (ElevenLabs)
 // ============================================
 
+// Debug: Check if voiceover elements exist
+console.log('Voiceover button found:', !!voiceoverBtn);
+console.log('Voiceover section found:', !!voiceoverSection);
+
 // Generate Voiceovers button click handler
-voiceoverBtn.addEventListener('click', async () => {
-    if (!currentJobId) {
-        console.error('No job ID found');
-        return;
-    }
+if (voiceoverBtn) {
+    voiceoverBtn.addEventListener('click', async () => {
+        console.log('Voiceover button clicked!');
 
-    console.log('=== Voiceover Generation via ElevenLabs ===');
-    console.log('Job ID:', currentJobId);
+        if (!currentJobId) {
+            console.error('No job ID found');
+            showToast('No job ID found. Please select or upload a PDF first.', 'error');
+            return;
+        }
 
-    voiceoverBtn.disabled = true;
-    voiceoverBtn.textContent = 'Checking...';
+        console.log('=== Voiceover Generation via ElevenLabs ===');
+        console.log('Job ID:', currentJobId);
 
-    try {
-        // First check if voiceovers already exist (cached)
-        console.log('Checking for cached voiceovers...');
-        const cacheResponse = await fetch(`/api/voiceover/${currentJobId}/progress`);
+        voiceoverBtn.disabled = true;
+        voiceoverBtn.textContent = 'Checking...';
 
-        if (cacheResponse.ok) {
-            const cacheData = await cacheResponse.json();
+        try {
+            // First check if voiceovers already exist (cached)
+            console.log('Checking for cached voiceovers...');
+            const cacheResponse = await fetch(`/api/voiceover/${currentJobId}/progress`);
 
-            // If we have cached results, show them directly
-            if (cacheData.status === 'complete' && cacheData.results && cacheData.results.length > 0) {
-                console.log('Found cached voiceovers:', cacheData.results.length);
-                displayVoiceoverResults(cacheData.results);
+            if (cacheResponse.ok) {
+                const cacheData = await cacheResponse.json();
 
-                voiceoverSection.classList.remove('hidden');
-                voiceoverSpinner.classList.add('hidden');
-                voiceoverContent.classList.remove('hidden');
-                manimSection.classList.add('hidden');
+                // If we have cached results, show them directly
+                if (cacheData.status === 'complete' && cacheData.results && cacheData.results.length > 0) {
+                    console.log('Found cached voiceovers:', cacheData.results.length);
+                    displayVoiceoverResults(cacheData.results);
 
-                voiceoverSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    voiceoverSection.classList.remove('hidden');
+                    voiceoverSpinner.classList.add('hidden');
+                    voiceoverContent.classList.remove('hidden');
+                    manimSection.classList.add('hidden');
 
-                showToast(`Loaded ${cacheData.successful} cached voiceovers`, 'success');
-                voiceoverBtn.disabled = false;
-                voiceoverBtn.textContent = 'Generate Voiceovers';
-                return;
+                    voiceoverSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                    showToast(`Loaded ${cacheData.successful} cached voiceovers`, 'success');
+                    voiceoverBtn.disabled = false;
+                    voiceoverBtn.textContent = 'Generate Voiceovers';
+                    return;
+                }
             }
+
+            // No cached voiceovers - start generation
+            console.log('No cached voiceovers found, starting generation...');
+
+            // Show voiceover section with spinner
+            voiceoverSection.classList.remove('hidden');
+            voiceoverSpinner.classList.remove('hidden');
+            voiceoverContent.classList.add('hidden');
+
+            // Scroll to voiceover section so user can see the spinner
+            voiceoverSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+            // Start background generation via ElevenLabs API
+            console.log('Calling API: POST /api/voiceover/' + currentJobId + '/start');
+            const response = await fetch(`/api/voiceover/${currentJobId}/start`, {
+                method: 'POST'
+            });
+
+            console.log('Response status:', response.status);
+
+            if (!response.ok) {
+                const error = await response.json();
+                console.error('API Error:', error);
+                throw new Error(error.detail || 'Failed to start voiceover generation');
+            }
+
+            const data = await response.json();
+            console.log('Generation started:', data);
+
+            // Poll for progress
+            voiceoverBtn.textContent = `Generating 0/${data.total_slides}...`;
+            await pollVoiceoverProgress(currentJobId, data.total_slides);
+
+        } catch (error) {
+            console.error('Voiceover generation failed:', error);
+            showToast(error.message, 'error');
+            voiceoverSpinner.classList.add('hidden');
+            voiceoverSection.classList.add('hidden');
+            voiceoverBtn.disabled = false;
+            voiceoverBtn.textContent = 'Generate Voiceovers';
         }
-
-        // No cached voiceovers - start generation
-        console.log('No cached voiceovers found, starting generation...');
-
-        // Show voiceover section with spinner
-        voiceoverSection.classList.remove('hidden');
-        voiceoverSpinner.classList.remove('hidden');
-        voiceoverContent.classList.add('hidden');
-
-        // Scroll to voiceover section so user can see the spinner
-        voiceoverSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-        // Start background generation via ElevenLabs API
-        console.log('Calling API: POST /api/voiceover/' + currentJobId + '/start');
-        const response = await fetch(`/api/voiceover/${currentJobId}/start`, {
-            method: 'POST'
-        });
-
-        console.log('Response status:', response.status);
-
-        if (!response.ok) {
-            const error = await response.json();
-            console.error('API Error:', error);
-            throw new Error(error.detail || 'Failed to start voiceover generation');
-        }
-
-        const data = await response.json();
-        console.log('Generation started:', data);
-
-        // Poll for progress
-        voiceoverBtn.textContent = `Generating 0/${data.total_slides}...`;
-        await pollVoiceoverProgress(currentJobId, data.total_slides);
-
-    } catch (error) {
-        console.error('Voiceover generation failed:', error);
-        showToast(error.message, 'error');
-        voiceoverSpinner.classList.add('hidden');
-        voiceoverSection.classList.add('hidden');
-        voiceoverBtn.disabled = false;
-        voiceoverBtn.textContent = 'Generate Voiceovers';
-    }
-});
+    });
+} else {
+    console.error('Voiceover button not found in DOM! Check if HTML is updated.');
+}
 
 // Poll for Voiceover generation progress
 async function pollVoiceoverProgress(jobId, totalSlides) {
@@ -1105,33 +1116,39 @@ function displayVoiceoverResults(results) {
 }
 
 // Back to Videos button (from voiceover section)
-document.getElementById('back-to-videos-btn').addEventListener('click', async () => {
-    voiceoverSection.classList.add('hidden');
-    manimSection.classList.remove('hidden');
-    manimContent.classList.remove('hidden');
-    manimSpinner.classList.add('hidden');
+const backToVideosBtn = document.getElementById('back-to-videos-btn');
+if (backToVideosBtn) {
+    backToVideosBtn.addEventListener('click', async () => {
+        voiceoverSection.classList.add('hidden');
+        manimSection.classList.remove('hidden');
+        manimContent.classList.remove('hidden');
+        manimSpinner.classList.add('hidden');
 
-    // Check if voiceovers already exist - if so, show "View Voiceovers" button
-    voiceoverBtn.disabled = false;
-    try {
-        const response = await fetch(`/api/voiceover/${currentJobId}/progress`);
-        if (response.ok) {
-            const data = await response.json();
-            if (data.status === 'complete' && data.results && data.results.length > 0) {
-                voiceoverBtn.textContent = 'View Voiceovers';
+        // Check if voiceovers already exist - if so, show "View Voiceovers" button
+        if (voiceoverBtn) voiceoverBtn.disabled = false;
+        try {
+            const response = await fetch(`/api/voiceover/${currentJobId}/progress`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.status === 'complete' && data.results && data.results.length > 0) {
+                    if (voiceoverBtn) voiceoverBtn.textContent = 'View Voiceovers';
+                } else {
+                    if (voiceoverBtn) voiceoverBtn.textContent = 'Generate Voiceovers';
+                }
             } else {
-                voiceoverBtn.textContent = 'Generate Voiceovers';
+                if (voiceoverBtn) voiceoverBtn.textContent = 'Generate Voiceovers';
             }
-        } else {
-            voiceoverBtn.textContent = 'Generate Voiceovers';
+        } catch (e) {
+            if (voiceoverBtn) voiceoverBtn.textContent = 'Generate Voiceovers';
         }
-    } catch (e) {
-        voiceoverBtn.textContent = 'Generate Voiceovers';
-    }
-});
+    });
+}
 
 // New Upload button in voiceover section
-document.getElementById('new-upload-btn-voiceover').addEventListener('click', resetToUpload);
+const newUploadBtnVoiceover = document.getElementById('new-upload-btn-voiceover');
+if (newUploadBtnVoiceover) {
+    newUploadBtnVoiceover.addEventListener('click', resetToUpload);
+}
 
 // Helper to check if voiceovers exist and update button
 async function checkVoiceoversExist() {
