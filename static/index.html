@@ -215,7 +215,38 @@
                         <div id="voiceover-slides-container" class="slides-container"></div>
                         <div class="results-actions">
                             <button id="back-to-videos-btn" class="btn">Back to Videos</button>
-                            <button id="new-upload-btn-voiceover" class="btn btn-dark">New Upload</button>
+                            <button id="final-video-btn" class="btn btn-dark">Generate Final Video</button>
+                            <button id="new-upload-btn-voiceover" class="btn">New Upload</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Final Video Section -->
+            <section id="final-video-section" class="card hidden">
+                <div class="card-header">
+                    <div class="card-dots">
+                        <span class="card-dot"></span>
+                        <span class="card-dot"></span>
+                    </div>
+                    <span class="card-title">final-video.mp4</span>
+                </div>
+                <div class="card-body">
+                    <h2>Final Video</h2>
+                    <div id="final-video-spinner" class="spinner hidden">
+                        <div class="spinner-circle"></div>
+                        <p>Rendering final video via Shotstack... This may take a few minutes.</p>
+                    </div>
+                    <div id="final-video-content" class="hidden">
+                        <div class="final-video-container" style="text-align: center; margin: 20px 0;">
+                            <video id="final-video-player" controls style="max-width: 100%; border-radius: 8px;">
+                                Your browser does not support the video tag.
+                            </video>
+                        </div>
+                        <div class="results-actions">
+                            <button id="back-to-voiceovers-btn" class="btn">Back to Voiceovers</button>
+                            <a id="download-final-video-btn" class="btn btn-dark" download>Download Video</a>
+                            <button id="new-upload-btn-final" class="btn">New Upload</button>
                         </div>
                     </div>
                 </div>
