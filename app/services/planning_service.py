@@ -43,10 +43,27 @@ Use these natural visual metaphors:
 ## SAFETY RULES (Prevent crashes)
 
 - MAX 30 objects - represent "many" with 5-7 fast-moving items
-- Use geometric primitives only (circles, rectangles, lines, arrows)
+- Use geometric primitives only (circles, rectangles, lines, arrows, dots, text)
 - Avoid: brain, star, robot, magnifying glass, warehouse, galaxy
 - Labels: keep short (max 12 characters)
 - For equations: simple format like "E = mc²" not complex LaTeX
+
+## BANNED WORDS (These crash the animation engine!)
+
+NEVER use these words in visual descriptions - they cause the renderer to fail:
+- icon, icons, SVG, image, photo, picture (use "small square" or "labeled shape" instead)
+- thousands, hundreds, dozens, vast, massive (use exact counts like "5 dots" or "3 shapes")
+- field of, sea of, cloud of (use "group of 5" instead)
+- floating, hovering (use "appearing above" instead)
+- particles, sparks, explosion (use "dots" or "small circles" instead)
+- bouncing, hitting, colliding (use "moving toward" instead)
+- random, randomly (use "one by one" or "sequentially" instead)
+
+GOOD: "Show 5 small squares labeled with tool names"
+BAD: "Show tool icons floating in a vast field"
+
+GOOD: "Display a group of 5 dots representing many options"
+BAD: "Display thousands of dots representing all possible options"
 
 ## COLORS
 BLACK background. BLUE (primary), YELLOW (highlight), TEAL (secondary), RED (contrast).
