@@ -51,27 +51,84 @@
                 </div>
             </section>
 
-            <!-- Previous Jobs Section -->
-            <section id="jobs-section" class="card">
+            <!-- Workflow Progress Section -->
+            <section id="workflow-section" class="card hidden">
                 <div class="card-header">
                     <div class="card-dots">
                         <span class="card-dot"></span>
                         <span class="card-dot"></span>
                     </div>
-                    <span class="card-title">previous-jobs.cache</span>
+                    <span class="card-title">workflow.progress</span>
                 </div>
                 <div class="card-body">
-                    <div class="jobs-header">
-                        <h2>Previous Jobs</h2>
-                        <button id="refresh-jobs-btn" class="btn">Refresh</button>
+                    <h2>Automated Workflow</h2>
+                    <div class="workflow-progress">
+                        <div class="workflow-step" data-step="upload">
+                            <div class="step-indicator">
+                                <span class="step-number">1</span>
+                                <span class="step-status"></span>
+                            </div>
+                            <div class="step-details">
+                                <h4>Upload PDF</h4>
+                                <p class="step-description">Document uploaded</p>
+                            </div>
+                        </div>
+                        <div class="workflow-step" data-step="ocr">
+                            <div class="step-indicator">
+                                <span class="step-number">2</span>
+                                <span class="step-status"></span>
+                            </div>
+                            <div class="step-details">
+                                <h4>OCR Processing</h4>
+                                <p class="step-description">Extract text from PDF using Mistral</p>
+                            </div>
+                        </div>
+                        <div class="workflow-step" data-step="plan">
+                            <div class="step-indicator">
+                                <span class="step-number">3</span>
+                                <span class="step-status"></span>
+                            </div>
+                            <div class="step-details">
+                                <h4>Generate Plan</h4>
+                                <p class="step-description">Claude creates video presentation plan</p>
+                            </div>
+                        </div>
+                        <div class="workflow-step" data-step="videos">
+                            <div class="step-indicator">
+                                <span class="step-number">4</span>
+                                <span class="step-status"></span>
+                            </div>
+                            <div class="step-details">
+                                <h4>Generate Videos</h4>
+                                <p class="step-description">Kodisc creates animated slide videos</p>
+                            </div>
+                        </div>
+                        <div class="workflow-step" data-step="voiceovers">
+                            <div class="step-indicator">
+                                <span class="step-number">5</span>
+                                <span class="step-status"></span>
+                            </div>
+                            <div class="step-details">
+                                <h4>Generate Voiceovers</h4>
+                                <p class="step-description">ElevenLabs creates audio narration</p>
+                            </div>
+                        </div>
+                        <div class="workflow-step" data-step="final">
+                            <div class="step-indicator">
+                                <span class="step-number">6</span>
+                                <span class="step-status"></span>
+                            </div>
+                            <div class="step-details">
+                                <h4>Final Video</h4>
+                                <p class="step-description">Shotstack combines everything</p>
+                            </div>
+                        </div>
                     </div>
-                    <p class="jobs-description">Resume from cached data without re-running API calls</p>
-                    <div id="jobs-list" class="jobs-list">
-                        <p class="jobs-loading">Loading cached jobs...</p>
+                    <div id="workflow-status" class="workflow-status">
+                        <p id="workflow-current-task">Ready to begin...</p>
                     </div>
-                    <div class="dev-actions">
-                        <button id="create-fixture-btn" class="btn">Create Test Fixture</button>
-                    </div>
+                    <button id="begin-workflow-btn" class="btn btn-dark btn-full">Begin Workflow</button>
+                    <button id="cancel-workflow-btn" class="btn btn-full hidden">Cancel Workflow</button>
                 </div>
             </section>
 
@@ -247,36 +304,6 @@
                             <button id="back-to-voiceovers-btn" class="btn">Back to Voiceovers</button>
                             <a id="download-final-video-btn" class="btn btn-dark" download>Download Video</a>
                             <button id="new-upload-btn-final" class="btn">New Upload</button>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Coming Soon -->
-            <section class="card future-steps">
-                <div class="card-header">
-                    <div class="card-dots">
-                        <span class="card-dot"></span>
-                        <span class="card-dot"></span>
-                    </div>
-                    <span class="card-title">coming-soon.txt</span>
-                </div>
-                <div class="card-body">
-                    <div class="steps-grid">
-                        <div class="step-card">
-                            <span class="step-num">01</span>
-                            <h3>Animation</h3>
-                            <p>Manim visuals</p>
-                        </div>
-                        <div class="step-card">
-                            <span class="step-num">02</span>
-                            <h3>Voiceover</h3>
-                            <p>AI narration</p>
-                        </div>
-                        <div class="step-card">
-                            <span class="step-num">03</span>
-                            <h3>Export</h3>
-                            <p>Final video</p>
                         </div>
                     </div>
                 </div>

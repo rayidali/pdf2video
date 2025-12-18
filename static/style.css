@@ -905,3 +905,139 @@ footer {
 ::-webkit-scrollbar-thumb {
     background: var(--black);
 }
+
+/* Workflow Progress */
+.workflow-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 20px 0;
+}
+
+.workflow-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 16px;
+    border: 2px solid var(--gray);
+    border-bottom: none;
+    background: var(--white);
+    transition: all 0.3s ease;
+}
+
+.workflow-step:first-child {
+    border-radius: 8px 8px 0 0;
+}
+
+.workflow-step:last-child {
+    border-bottom: 2px solid var(--gray);
+    border-radius: 0 0 8px 8px;
+}
+
+.workflow-step.active {
+    border-color: var(--black);
+    background: #f0f0f0;
+}
+
+.workflow-step.completed {
+    border-color: #22c55e;
+    background: #f0fdf4;
+}
+
+.workflow-step.error {
+    border-color: #ef4444;
+    background: #fef2f2;
+}
+
+.step-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 40px;
+}
+
+.step-number {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--gray);
+    border: 2px solid var(--black);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.workflow-step.active .step-number {
+    background: var(--black);
+    color: var(--white);
+    animation: pulse 1.5s infinite;
+}
+
+.workflow-step.completed .step-number {
+    background: #22c55e;
+    border-color: #22c55e;
+    color: var(--white);
+}
+
+.workflow-step.completed .step-number::after {
+    content: '✓';
+}
+
+.workflow-step.completed .step-number {
+    font-size: 0;
+}
+
+.workflow-step.completed .step-number::after {
+    font-size: 16px;
+}
+
+.workflow-step.error .step-number {
+    background: #ef4444;
+    border-color: #ef4444;
+    color: var(--white);
+}
+
+.step-details {
+    flex: 1;
+}
+
+.step-details h4 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.step-description {
+    font-size: 12px;
+    color: var(--gray-dark);
+}
+
+.workflow-step.active .step-description {
+    color: var(--black);
+    font-weight: 500;
+}
+
+.workflow-status {
+    padding: 16px;
+    background: var(--black);
+    color: var(--white);
+    border-radius: 8px;
+    margin: 16px 0;
+    text-align: center;
+}
+
+#workflow-current-task {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.1);
+    }
+}

@@ -97,7 +97,14 @@ removeFileBtn.addEventListener('click', () => {
     uploadBtn.disabled = true;
 });
 
-// Upload
+// Workflow elements
+const workflowSection = document.getElementById('workflow-section');
+const beginWorkflowBtn = document.getElementById('begin-workflow-btn');
+const cancelWorkflowBtn = document.getElementById('cancel-workflow-btn');
+const workflowCurrentTask = document.getElementById('workflow-current-task');
+let workflowCancelled = false;
+
+// Upload - now shows workflow section
 uploadBtn.addEventListener('click', async () => {
     if (!selectedFile) return;
 
@@ -121,19 +128,259 @@ uploadBtn.addEventListener('click', async () => {
         const data = await response.json();
         currentJobId = data.job_id;
 
-        // Show processing section
-        jobIdEl.textContent = currentJobId;
-        updateStatus('uploaded');
+        // Show workflow section instead of processing section
         uploadSection.classList.add('hidden');
-        processingSection.classList.remove('hidden');
+        workflowSection.classList.remove('hidden');
+
+        // Mark upload step as complete
+        updateWorkflowStep('upload', 'completed', 'PDF uploaded successfully');
 
         showToast('PDF uploaded successfully!', 'success');
+        uploadBtn.textContent = 'Upload PDF';
     } catch (error) {
         showToast(error.message, 'error');
         uploadBtn.disabled = false;
         uploadBtn.textContent = 'Upload PDF';
     }
 });
+
+// Workflow step management
+function updateWorkflowStep(step, status, description) {
+    const stepEl = document.querySelector(`.workflow-step[data-step="${step}"]`);
+    if (!stepEl) return;
+
+    // Remove all status classes
+    stepEl.classList.remove('active', 'completed', 'error');
+
+    // Add new status class
+    if (status) {
+        stepEl.classList.add(status);
+    }
+
+    // Update description
+    if (description) {
+        const descEl = stepEl.querySelector('.step-description');
+        if (descEl) descEl.textContent = description;
+    }
+}
+
+function setWorkflowStatus(message) {
+    if (workflowCurrentTask) {
+        workflowCurrentTask.textContent = message;
+    }
+}
+
+// Begin Workflow - runs all stages automatically
+if (beginWorkflowBtn) {
+    beginWorkflowBtn.addEventListener('click', async () => {
+        if (!currentJobId) {
+            showToast('No job ID found', 'error');
+            return;
+        }
+
+        workflowCancelled = false;
+        beginWorkflowBtn.classList.add('hidden');
+        cancelWorkflowBtn.classList.remove('hidden');
+
+        try {
+            await runAutomatedWorkflow();
+        } catch (error) {
+            console.error('Workflow error:', error);
+            showToast(error.message, 'error');
+            setWorkflowStatus('Workflow failed: ' + error.message);
+        }
+
+        beginWorkflowBtn.classList.remove('hidden');
+        cancelWorkflowBtn.classList.add('hidden');
+    });
+}
+
+if (cancelWorkflowBtn) {
+    cancelWorkflowBtn.addEventListener('click', () => {
+        workflowCancelled = true;
+        setWorkflowStatus('Cancelling workflow...');
+        showToast('Workflow cancelled', 'info');
+    });
+}
+
+async function runAutomatedWorkflow() {
+    // Stage 1: OCR
+    if (workflowCancelled) return;
+    updateWorkflowStep('ocr', 'active', 'Extracting text from PDF...');
+    setWorkflowStatus('Running OCR with Mistral...');
+
+    try {
+        const ocrResponse = await fetch(`/api/process/${currentJobId}`, { method: 'POST' });
+        if (!ocrResponse.ok) throw new Error('OCR processing failed');
+
+        const mdResponse = await fetch(`/api/markdown/${currentJobId}`);
+        const mdData = await mdResponse.json();
+        displayMarkdown(mdData.markdown);
+
+        updateWorkflowStep('ocr', 'completed', 'Text extracted successfully');
+        resultsSection.classList.remove('hidden');
+        resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        showToast('OCR completed!', 'success');
+    } catch (error) {
+        updateWorkflowStep('ocr', 'error', 'OCR failed: ' + error.message);
+        throw error;
+    }
+
+    // Stage 2: Generate Plan
+    if (workflowCancelled) return;
+    await new Promise(r => setTimeout(r, 1000)); // Brief pause
+    updateWorkflowStep('plan', 'active', 'Claude is creating the video plan...');
+    setWorkflowStatus('Generating presentation plan with Claude...');
+
+    try {
+        const planResponse = await fetch(`/api/plan/${currentJobId}`, { method: 'POST' });
+        if (!planResponse.ok) throw new Error('Plan generation failed');
+
+        const planData = await planResponse.json();
+        displayPlan(planData.plan);
+
+        updateWorkflowStep('plan', 'completed', `Plan created with ${planData.plan.slides.length} slides`);
+        planSection.classList.remove('hidden');
+        planContent.classList.remove('hidden');
+        planSpinner.classList.add('hidden');
+        planSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        showToast('Plan generated!', 'success');
+    } catch (error) {
+        updateWorkflowStep('plan', 'error', 'Plan failed: ' + error.message);
+        throw error;
+    }
+
+    // Stage 3: Generate Videos
+    if (workflowCancelled) return;
+    await new Promise(r => setTimeout(r, 1000));
+    updateWorkflowStep('videos', 'active', 'Generating animated videos...');
+    setWorkflowStatus('Creating animations with Kodisc...');
+
+    try {
+        const startResponse = await fetch(`/api/kodisc/${currentJobId}/start`, { method: 'POST' });
+        if (!startResponse.ok) throw new Error('Video generation failed to start');
+
+        const startData = await startResponse.json();
+        const totalSlides = startData.total_slides;
+
+        // Poll for video progress
+        while (true) {
+            if (workflowCancelled) return;
+            await new Promise(r => setTimeout(r, 3000));
+
+            const progressResponse = await fetch(`/api/kodisc/${currentJobId}/progress`);
+            const progress = await progressResponse.json();
+
+            updateWorkflowStep('videos', 'active', `Generating video ${progress.completed_slides}/${totalSlides}...`);
+            setWorkflowStatus(`Creating animation: ${progress.current_title || 'Processing...'}`);
+
+            if (progress.status === 'complete') {
+                displayVideoResults(progress.results);
+                updateWorkflowStep('videos', 'completed', `${progress.successful} videos created`);
+                manimSection.classList.remove('hidden');
+                manimContent.classList.remove('hidden');
+                manimSpinner.classList.add('hidden');
+                manimSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                showToast('Videos generated!', 'success');
+                break;
+            }
+
+            if (progress.status === 'error' || progress.status === 'cancelled') {
+                throw new Error(progress.error || 'Video generation failed');
+            }
+        }
+    } catch (error) {
+        updateWorkflowStep('videos', 'error', 'Videos failed: ' + error.message);
+        throw error;
+    }
+
+    // Stage 4: Generate Voiceovers
+    if (workflowCancelled) return;
+    await new Promise(r => setTimeout(r, 1000));
+    updateWorkflowStep('voiceovers', 'active', 'Generating voice narration...');
+    setWorkflowStatus('Creating voiceovers with ElevenLabs...');
+
+    try {
+        const voiceStartResponse = await fetch(`/api/voiceover/${currentJobId}/start`, { method: 'POST' });
+        if (!voiceStartResponse.ok) throw new Error('Voiceover generation failed to start');
+
+        const voiceStartData = await voiceStartResponse.json();
+        const totalVoiceovers = voiceStartData.total_slides;
+
+        // Poll for voiceover progress
+        while (true) {
+            if (workflowCancelled) return;
+            await new Promise(r => setTimeout(r, 2000));
+
+            const progressResponse = await fetch(`/api/voiceover/${currentJobId}/progress`);
+            const progress = await progressResponse.json();
+
+            updateWorkflowStep('voiceovers', 'active', `Generating voiceover ${progress.completed_slides}/${totalVoiceovers}...`);
+            setWorkflowStatus(`Creating narration: ${progress.current_title || 'Processing...'}`);
+
+            if (progress.status === 'complete') {
+                displayVoiceoverResults(progress.results);
+                updateWorkflowStep('voiceovers', 'completed', `${progress.successful} voiceovers created`);
+                voiceoverSection.classList.remove('hidden');
+                voiceoverContent.classList.remove('hidden');
+                voiceoverSpinner.classList.add('hidden');
+                voiceoverSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                showToast('Voiceovers generated!', 'success');
+                break;
+            }
+
+            if (progress.status === 'error' || progress.status === 'cancelled') {
+                throw new Error(progress.error || 'Voiceover generation failed');
+            }
+        }
+    } catch (error) {
+        updateWorkflowStep('voiceovers', 'error', 'Voiceovers failed: ' + error.message);
+        throw error;
+    }
+
+    // Stage 5: Generate Final Video
+    if (workflowCancelled) return;
+    await new Promise(r => setTimeout(r, 1000));
+    updateWorkflowStep('final', 'active', 'Assembling final video...');
+    setWorkflowStatus('Rendering final video with Shotstack...');
+
+    try {
+        const renderResponse = await fetch(`/api/shotstack/${currentJobId}/render`, { method: 'POST' });
+        if (!renderResponse.ok) throw new Error('Final video render failed to start');
+
+        // Poll for render progress
+        while (true) {
+            if (workflowCancelled) return;
+            await new Promise(r => setTimeout(r, 5000));
+
+            const progressResponse = await fetch(`/api/shotstack/${currentJobId}/progress`);
+            const progress = await progressResponse.json();
+
+            const statusText = progress.shotstack_status || progress.status || 'processing';
+            updateWorkflowStep('final', 'active', `Rendering: ${statusText}...`);
+            setWorkflowStatus(`Shotstack status: ${statusText}`);
+
+            if (progress.status === 'complete' && progress.video_url) {
+                displayFinalVideo(progress.video_url);
+                updateWorkflowStep('final', 'completed', 'Final video ready!');
+                finalVideoSection.classList.remove('hidden');
+                finalVideoContent.classList.remove('hidden');
+                finalVideoSpinner.classList.add('hidden');
+                finalVideoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                showToast('Final video ready!', 'success');
+                setWorkflowStatus('Workflow complete! Your video is ready.');
+                break;
+            }
+
+            if (progress.status === 'failed' || progress.status === 'error') {
+                throw new Error(progress.error || 'Final video rendering failed');
+            }
+        }
+    } catch (error) {
+        updateWorkflowStep('final', 'error', 'Final video failed: ' + error.message);
+        throw error;
+    }
+}
 
 // Process OCR
 processBtn.addEventListener('click', async () => {
@@ -631,6 +878,7 @@ function resetToUpload() {
     selectedFile = null;
     currentJobId = null;
     fileInput.value = '';
+    workflowCancelled = false;
 
     // Reset UI
     dropZone.classList.remove('hidden');
@@ -646,13 +894,41 @@ function resetToUpload() {
     voiceoverBtn.disabled = false;
     voiceoverBtn.textContent = 'Generate Voiceovers';
 
-    // Show upload section
+    // Reset workflow steps
+    document.querySelectorAll('.workflow-step').forEach(step => {
+        step.classList.remove('active', 'completed', 'error');
+        const desc = step.querySelector('.step-description');
+        if (desc) {
+            const stepName = step.dataset.step;
+            const defaultDescs = {
+                'upload': 'Document uploaded',
+                'ocr': 'Extract text from PDF using Mistral',
+                'plan': 'Claude creates video presentation plan',
+                'videos': 'Kodisc creates animated slide videos',
+                'voiceovers': 'ElevenLabs creates audio narration',
+                'final': 'Shotstack combines everything'
+            };
+            desc.textContent = defaultDescs[stepName] || '';
+        }
+    });
+    if (beginWorkflowBtn) {
+        beginWorkflowBtn.classList.remove('hidden');
+    }
+    if (cancelWorkflowBtn) {
+        cancelWorkflowBtn.classList.add('hidden');
+    }
+    if (workflowCurrentTask) {
+        workflowCurrentTask.textContent = 'Ready to begin...';
+    }
+
+    // Hide all sections
     resultsSection.classList.add('hidden');
     processingSection.classList.add('hidden');
     planSection.classList.add('hidden');
     manimSection.classList.add('hidden');
     voiceoverSection.classList.add('hidden');
     if (finalVideoSection) finalVideoSection.classList.add('hidden');
+    if (workflowSection) workflowSection.classList.add('hidden');
     uploadSection.classList.remove('hidden');
 }
 
@@ -732,186 +1008,6 @@ function showToast(message, type = 'info') {
         toast.remove();
     }, duration);
 }
-
-// ============================================
-// JOB DISCOVERY & RESTORATION
-// ============================================
-
-const jobsList = document.getElementById('jobs-list');
-const refreshJobsBtn = document.getElementById('refresh-jobs-btn');
-const createFixtureBtn = document.getElementById('create-fixture-btn');
-const jobsSection = document.getElementById('jobs-section');
-
-// Load jobs on page load
-async function loadJobs() {
-    jobsList.innerHTML = '<p class="jobs-loading">Loading cached jobs...</p>';
-
-    try {
-        const response = await fetch('/api/jobs');
-        const data = await response.json();
-
-        if (data.jobs.length === 0) {
-            jobsList.innerHTML = '<p class="no-jobs">No cached jobs found. Upload a PDF or create a test fixture.</p>';
-            return;
-        }
-
-        jobsList.innerHTML = '';
-        data.jobs.forEach(job => {
-            const jobCard = document.createElement('div');
-            jobCard.className = 'job-card';
-            jobCard.onclick = () => restoreJob(job.job_id, job.completed_step);
-
-            const badgeClass = job.completed_step === 'manim_complete' ? 'complete' : 'partial';
-            const stepLabel = {
-                'manim_complete': 'Complete',
-                'plan_complete': 'Has Plan',
-                'ocr_complete': 'Has OCR',
-                'unknown': 'Unknown'
-            }[job.completed_step] || job.completed_step;
-
-            jobCard.innerHTML = `
-                <span class="job-card-id">${job.job_id}</span>
-                <div class="job-card-info">
-                    <div class="job-card-name">${job.pdf_name || 'Unknown PDF'}</div>
-                    <div class="job-card-status">
-                        <span class="job-card-badge ${badgeClass}">${stepLabel}</span>
-                        ${job.slides_count ? `<span>${job.slides_count} slides</span>` : ''}
-                    </div>
-                </div>
-                <span class="job-card-arrow">→</span>
-            `;
-
-            jobsList.appendChild(jobCard);
-        });
-    } catch (error) {
-        console.error('Failed to load jobs:', error);
-        jobsList.innerHTML = '<p class="no-jobs">Failed to load jobs. Server may be offline.</p>';
-    }
-}
-
-// Restore a job and navigate to the appropriate section
-async function restoreJob(jobId, completedStep) {
-    console.log(`Restoring job ${jobId} at step ${completedStep}`);
-
-    try {
-        // First restore the job on the server
-        const response = await fetch(`/api/jobs/${jobId}/restore`, {
-            method: 'POST'
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to restore job');
-        }
-
-        const data = await response.json();
-        console.log('Job restored:', data);
-
-        // Set the current job ID
-        currentJobId = jobId;
-
-        // Hide all sections first
-        uploadSection.classList.add('hidden');
-        jobsSection.classList.add('hidden');
-        processingSection.classList.add('hidden');
-        resultsSection.classList.add('hidden');
-        planSection.classList.add('hidden');
-        manimSection.classList.add('hidden');
-
-        // Navigate to the appropriate section based on completed step
-        if (data.has_manim) {
-            // Show Videos section with existing video results
-            const videoResponse = await fetch(`/api/kodisc/${jobId}/progress`);
-            const videoData = await videoResponse.json();
-            if (videoData.results && videoData.results.length > 0) {
-                displayVideoResults(videoData.results);
-            }
-            manimContent.classList.remove('hidden');
-            manimSpinner.classList.add('hidden');
-            manimSection.classList.remove('hidden');
-            showToast(`Restored job ${jobId} - Videos ready!`, 'success');
-        } else if (data.has_plan) {
-            // Show Plan section with existing plan
-            const planResponse = await fetch(`/api/plan/${jobId}`);
-            const planData = await planResponse.json();
-            displayPlan(planData.plan);
-            planContent.classList.remove('hidden');
-            planSpinner.classList.add('hidden');
-            planSection.classList.remove('hidden');
-            showToast(`Restored job ${jobId} - Ready to generate Manim code!`, 'success');
-        } else if (data.has_markdown) {
-            // Show Results section with existing markdown
-            const mdResponse = await fetch(`/api/markdown/${jobId}`);
-            const mdData = await mdResponse.json();
-            displayMarkdown(mdData.markdown);
-            resultsSection.classList.remove('hidden');
-            showToast(`Restored job ${jobId} - Ready to generate plan!`, 'success');
-        } else {
-            // Show processing section
-            jobIdEl.textContent = jobId;
-            updateStatus('uploaded');
-            processingSection.classList.remove('hidden');
-            showToast(`Restored job ${jobId} - Ready to process OCR!`, 'success');
-        }
-
-        // Reset button states
-        planBtn.disabled = false;
-        planBtn.textContent = 'Generate Plan';
-        manimBtn.disabled = false;
-        manimBtn.textContent = 'Generate Videos';
-
-    } catch (error) {
-        console.error('Failed to restore job:', error);
-        showToast(`Failed to restore job: ${error.message}`, 'error');
-    }
-}
-
-// Create development fixture
-async function createFixture() {
-    createFixtureBtn.disabled = true;
-    createFixtureBtn.textContent = 'Creating...';
-
-    try {
-        const response = await fetch('/api/dev/create-fixture', {
-            method: 'POST'
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to create fixture');
-        }
-
-        const data = await response.json();
-        console.log('Fixture created:', data);
-
-        showToast('Test fixture created! Refreshing job list...', 'success');
-
-        // Reload jobs list
-        await loadJobs();
-    } catch (error) {
-        console.error('Failed to create fixture:', error);
-        showToast(`Failed to create fixture: ${error.message}`, 'error');
-    } finally {
-        createFixtureBtn.disabled = false;
-        createFixtureBtn.textContent = 'Create Test Fixture';
-    }
-}
-
-// Event listeners
-refreshJobsBtn.addEventListener('click', loadJobs);
-createFixtureBtn.addEventListener('click', createFixture);
-
-// Update resetToUpload to also show jobs section again
-const originalResetToUpload = resetToUpload;
-function resetToUpload() {
-    originalResetToUpload();
-    jobsSection.classList.remove('hidden');
-    loadJobs(); // Refresh the job list
-}
-
-// Reassign the event listeners with the updated function
-newUploadBtn.removeEventListener('click', originalResetToUpload);
-newUploadBtnResults.removeEventListener('click', originalResetToUpload);
-newUploadBtn.addEventListener('click', resetToUpload);
-newUploadBtnResults.addEventListener('click', resetToUpload);
 
 // ============================================
 // VOICEOVER GENERATION (ElevenLabs)
@@ -1167,7 +1263,7 @@ async function checkVoiceoversExist() {
 }
 
 // Load jobs when the page loads
-document.addEventListener('DOMContentLoaded', loadJobs);
+// Page loaded - ready for upload
 
 // ============================================
 // FINAL VIDEO GENERATION (Shotstack)

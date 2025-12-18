@@ -75,20 +75,19 @@ class ShotstackService:
         self,
         slides: List[SlideAsset],
         min_clip_duration: float = 5.0,
-        estimated_video_duration: float = 7.0,
-        trim_end: float = 2.0
+        trim_end: float = 1.5
     ) -> dict:
         """
         Build Shotstack timeline JSON from slide assets.
 
-        Loops video clips to fill audio duration (avoids freezing on black frames).
-        Trims the last 2s from each video to avoid fade-out black frames.
+        Uses freeze-frame technique: extends clip length to match audio duration.
+        Shotstack automatically freezes the last visible frame when clip length
+        exceeds video duration.
 
         Args:
             slides: List of SlideAsset with video/audio URLs
             min_clip_duration: Minimum clip duration if no audio
-            estimated_video_duration: Estimated duration of Kodisc videos (for looping)
-            trim_end: Seconds to trim from end of video (avoid fade-out)
+            trim_end: Seconds to trim from end of video (avoid fade-out black frames)
 
         Returns:
             Timeline dict for Shotstack API
@@ -97,34 +96,25 @@ class ShotstackService:
         audio_clips = []
         current_time = 0.0
 
-        # Effective video duration after trimming the end
-        effective_video_duration = estimated_video_duration - trim_end
-
         for slide in slides:
-            # Determine total duration needed for this slide
-            total_duration = slide.audio_duration if slide.audio_duration else min_clip_duration
+            # Determine clip duration:
+            # - If audio exists, use audio_duration (freeze last frame to fill time)
+            # - Otherwise use minimum duration
+            clip_duration = slide.audio_duration if slide.audio_duration else min_clip_duration
 
-            # Loop video to fill audio duration (instead of freeze-frame)
-            # This avoids showing a frozen black frame from fade-out
-            slide_start = current_time
-            time_filled = 0.0
-
-            while time_filled < total_duration:
-                remaining = total_duration - time_filled
-                # Use shorter of: remaining time or effective video duration
-                clip_length = min(remaining, effective_video_duration)
-
-                video_clip = {
-                    "asset": {
-                        "type": "video",
-                        "src": slide.video_url,
-                        "volume": 0  # Mute original video audio
-                    },
-                    "start": slide_start + time_filled,
-                    "length": clip_length
-                }
-                video_clips.append(video_clip)
-                time_filled += clip_length
+            # Video clip - set length to audio duration for freeze-frame effect
+            # Shotstack will play video then freeze last frame until clip_duration
+            # Note: Videos are ~7s, audio is ~25-30s, so last frame freezes for ~20s
+            video_clip = {
+                "asset": {
+                    "type": "video",
+                    "src": slide.video_url,
+                    "volume": 0  # Mute original video audio
+                },
+                "start": current_time,
+                "length": clip_duration
+            }
+            video_clips.append(video_clip)
 
             # Audio clip (on separate track - top layer)
             if slide.audio_url and slide.audio_duration:
@@ -139,7 +129,7 @@ class ShotstackService:
                 }
                 audio_clips.append(audio_clip)
 
-            current_time += total_duration
+            current_time += clip_duration
 
         # Build timeline with tracks
         # Tracks are layered: first track is on top
