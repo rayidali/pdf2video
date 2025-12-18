@@ -18,6 +18,7 @@ from app.services.render_service import GenerativeManimService
 from app.services.kodisc_service import KodiscService
 from app.services.elevenlabs_service import ElevenLabsService
 from app.services.r2_service import R2Service
+from app.services.shotstack_service import ShotstackService, SlideAsset
 
 # Configure logging
 logging.basicConfig(
@@ -49,6 +50,10 @@ r2_service = R2Service(
     endpoint_url=settings.R2_ENDPOINT_URL,
     bucket_name=settings.R2_BUCKET_NAME,
     public_url_base=settings.R2_PUBLIC_URL_BASE
+)
+shotstack_service = ShotstackService(
+    api_key=settings.SHOTSTACK_API_KEY,
+    env=settings.SHOTSTACK_ENV
 )
 
 # Ensure directories exist
@@ -2437,5 +2442,277 @@ async def get_voiceovers(job_id: str):
         "total_audio": len(manifest),
         "audio_files": manifest,
         "source": "elevenlabs",
+        "cached": True
+    }
+
+
+# ============================================
+# FINAL VIDEO ASSEMBLY (Shotstack)
+# Combine all slide videos + voiceovers into one video
+# ============================================
+
+# Track Shotstack render tasks
+shotstack_tasks: dict[str, dict] = {}
+
+
+@app.get("/api/shotstack/status")
+async def shotstack_status():
+    """
+    Check if Shotstack service is configured and ready.
+    """
+    configured = shotstack_service.is_configured()
+    return {
+        "configured": configured,
+        "env": settings.SHOTSTACK_ENV,
+        "message": "Ready" if configured else "SHOTSTACK_API_KEY not set"
+    }
+
+
+async def _render_final_video_background(job_id: str):
+    """Background task to render final video with Shotstack."""
+    task = shotstack_tasks[job_id]
+
+    try:
+        # Load video manifest
+        video_manifest_path = settings.OUTPUTS_DIR / job_id / "videos" / "kodisc_manifest.json"
+        if not video_manifest_path.exists():
+            task["status"] = "failed"
+            task["error"] = "No video manifest found. Generate videos first with /api/kodisc/{job_id}/start"
+            return
+
+        video_manifest = json.loads(video_manifest_path.read_text())
+
+        # Load audio manifest
+        audio_manifest_path = settings.OUTPUTS_DIR / job_id / "audio" / "voiceover_manifest.json"
+        audio_manifest = []
+        if audio_manifest_path.exists():
+            audio_manifest = json.loads(audio_manifest_path.read_text())
+
+        # Create lookup for audio by slide number
+        audio_by_slide = {a["slide_number"]: a for a in audio_manifest}
+
+        # Build SlideAsset list
+        slides = []
+        for video in video_manifest:
+            slide_num = video["slide_number"]
+            audio = audio_by_slide.get(slide_num, {})
+
+            slide = SlideAsset(
+                slide_number=slide_num,
+                video_url=video["video_url"],
+                audio_url=audio.get("audio_url"),
+                audio_duration=audio.get("audio_duration"),
+                title=video.get("title")
+            )
+            slides.append(slide)
+
+        if not slides:
+            task["status"] = "failed"
+            task["error"] = "No valid slides found in manifest"
+            return
+
+        # Sort by slide number
+        slides.sort(key=lambda s: s.slide_number)
+
+        task["total_slides"] = len(slides)
+        task["status"] = "submitting"
+        logger.info(f"[Shotstack] Submitting render for job {job_id} with {len(slides)} slides...")
+
+        # Submit to Shotstack
+        submit_result = await shotstack_service.submit_render(slides)
+
+        if not submit_result.success or not submit_result.render_id:
+            task["status"] = "failed"
+            task["error"] = submit_result.error or "Failed to submit render"
+            return
+
+        task["render_id"] = submit_result.render_id
+        task["status"] = "rendering"
+        logger.info(f"[Shotstack] Render submitted: {submit_result.render_id}")
+
+        # Poll for completion
+        poll_attempt = 0
+        max_attempts = 120  # 10 minutes
+        poll_interval = 5
+
+        while poll_attempt < max_attempts:
+            await asyncio.sleep(poll_interval)
+            poll_attempt += 1
+
+            status_result = await shotstack_service.check_render_status(submit_result.render_id)
+            task["shotstack_status"] = status_result.status
+
+            if status_result.status == "done":
+                task["status"] = "complete"
+                task["video_url"] = status_result.video_url
+                logger.info(f"[Shotstack] Render complete: {status_result.video_url}")
+
+                # Save result to disk
+                result_path = settings.OUTPUTS_DIR / job_id / "final_video.json"
+                result_path.write_text(json.dumps({
+                    "job_id": job_id,
+                    "render_id": submit_result.render_id,
+                    "video_url": status_result.video_url,
+                    "total_slides": len(slides),
+                    "source": "shotstack"
+                }, indent=2))
+                return
+
+            elif status_result.status == "failed":
+                task["status"] = "failed"
+                task["error"] = status_result.error
+                logger.error(f"[Shotstack] Render failed: {status_result.error}")
+                return
+
+            # Log progress periodically
+            if poll_attempt % 6 == 0:
+                logger.info(f"[Shotstack] Still rendering... status={status_result.status}, attempt={poll_attempt}/{max_attempts}")
+
+        # Timeout
+        task["status"] = "failed"
+        task["error"] = f"Render timeout after {max_attempts * poll_interval} seconds"
+        logger.error(f"[Shotstack] Render timeout for job {job_id}")
+
+    except Exception as e:
+        logger.error(f"[Shotstack] Error for job {job_id}: {e}")
+        task["status"] = "failed"
+        task["error"] = str(e)
+
+
+@app.post("/api/shotstack/{job_id}/render")
+async def start_final_render(job_id: str, background_tasks: BackgroundTasks):
+    """
+    Combine all slide videos + voiceovers into one final video using Shotstack.
+
+    Prerequisites:
+    1. Videos generated: POST /api/kodisc/{job_id}/start
+    2. Voiceovers generated: POST /api/voiceover/{job_id}/start
+
+    The final video will:
+    - Sequence all slide videos in order
+    - Overlay voiceover audio on each slide
+    - Use freeze-frame technique (last frame shown while voiceover plays)
+    - Add fade transitions between slides
+
+    Returns immediately - poll /api/shotstack/{job_id}/progress for status.
+    """
+    if not shotstack_service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Shotstack not configured. Set SHOTSTACK_API_KEY in environment."
+        )
+
+    # Check if already running
+    if job_id in shotstack_tasks and shotstack_tasks[job_id]["status"] == "rendering":
+        return {
+            "job_id": job_id,
+            "status": "already_running",
+            "render_id": shotstack_tasks[job_id].get("render_id"),
+            "message": "Render already in progress. Check /api/shotstack/{job_id}/progress"
+        }
+
+    # Validate manifests exist
+    video_manifest_path = settings.OUTPUTS_DIR / job_id / "videos" / "kodisc_manifest.json"
+    if not video_manifest_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="No videos found. Generate them first with POST /api/kodisc/{job_id}/start"
+        )
+
+    # Initialize task tracker
+    shotstack_tasks[job_id] = {
+        "status": "starting",
+        "total_slides": 0,
+        "render_id": None,
+        "shotstack_status": None,
+        "video_url": None,
+        "error": None
+    }
+
+    # Start background task
+    background_tasks.add_task(_render_final_video_background, job_id)
+
+    logger.info(f"[Shotstack] Started final render for job {job_id}")
+
+    return {
+        "job_id": job_id,
+        "status": "started",
+        "progress_url": f"/api/shotstack/{job_id}/progress",
+        "message": "Final video render started. Poll progress_url for status."
+    }
+
+
+@app.get("/api/shotstack/{job_id}/progress")
+async def get_shotstack_progress(job_id: str):
+    """
+    Get the current progress of final video rendering.
+    """
+    if job_id not in shotstack_tasks:
+        # Check if there's a saved result on disk
+        result_path = settings.OUTPUTS_DIR / job_id / "final_video.json"
+        if result_path.exists():
+            saved_result = json.loads(result_path.read_text())
+            return {
+                "job_id": job_id,
+                "status": "complete",
+                "from_cache": True,
+                **saved_result
+            }
+        raise HTTPException(
+            status_code=404,
+            detail="No render task found. Start one with POST /api/shotstack/{job_id}/render"
+        )
+
+    task = shotstack_tasks[job_id]
+
+    return {
+        "job_id": job_id,
+        "status": task["status"],
+        "render_id": task.get("render_id"),
+        "shotstack_status": task.get("shotstack_status"),
+        "total_slides": task.get("total_slides", 0),
+        "video_url": task.get("video_url"),
+        "error": task.get("error")
+    }
+
+
+@app.get("/api/shotstack/{job_id}/final")
+async def get_final_video(job_id: str):
+    """
+    Get the final combined video URL.
+
+    This loads from disk cache if available.
+    """
+    result_path = settings.OUTPUTS_DIR / job_id / "final_video.json"
+
+    if not result_path.exists():
+        # Check if render is in progress
+        if job_id in shotstack_tasks:
+            task = shotstack_tasks[job_id]
+            if task["status"] == "complete" and task.get("video_url"):
+                return {
+                    "job_id": job_id,
+                    "status": "complete",
+                    "video_url": task["video_url"]
+                }
+            return {
+                "job_id": job_id,
+                "status": task["status"],
+                "message": "Render in progress. Check /api/shotstack/{job_id}/progress"
+            }
+
+        raise HTTPException(
+            status_code=404,
+            detail="No final video found. Start render with POST /api/shotstack/{job_id}/render"
+        )
+
+    result = json.loads(result_path.read_text())
+
+    return {
+        "job_id": job_id,
+        "status": "complete",
+        "video_url": result["video_url"],
+        "render_id": result.get("render_id"),
+        "total_slides": result.get("total_slides"),
         "cached": True
     }
