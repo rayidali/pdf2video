@@ -1812,17 +1812,9 @@ async def _generate_kodisc_videos_background(job_id: str):
                 else f"Create a simple diagram explaining {title}"
             )
 
-            # Middle-ground prompt - also use SYSTEM+USER format
-            middle_prompt = SYSTEM_PROMPT + (
-                f"Show the title '{title[:30]}' at the top using Text. "
-                f"Below it, draw 3 circles in a horizontal row. "
-                f"Connect the circles with arrows pointing right."
-            )
-
-            # Guaranteed fallback - TEXT-ONLY PPT-style slide (almost 100% reliable)
+            # Fallback - TEXT-ONLY PPT-style slide (almost 100% reliable)
             # Format bullet points (max 3, max 40 chars each)
             bullets = key_points[:3] if key_points else ["Key concept", "Main idea", "Summary"]
-            bullet_text = " | ".join([b[:40] for b in bullets])
 
             fallback_prompt = SYSTEM_PROMPT + (
                 f"Create a minimal text-only slide like PowerPoint. BLACK background. "
@@ -1839,7 +1831,7 @@ async def _generate_kodisc_videos_background(job_id: str):
             logger.info(f"[Kodisc] Sanitized USER section: {safe_visual_desc[:80] if safe_visual_desc else 'None'}...")
 
             # Delay between attempts (seconds)
-            ATTEMPT_DELAY = 3.0  # Increased for stability
+            ATTEMPT_DELAY = 3.0
 
             # === ATTEMPT 1: Primary prompt with colors ===
             result = await kodisc_service.generate_video(
@@ -1863,22 +1855,9 @@ async def _generate_kodisc_videos_background(job_id: str):
                 )
                 attempt = 2
 
-            # === ATTEMPT 3: Middle-ground prompt ===
+            # === ATTEMPT 3: Text-only PPT fallback (almost never fails) ===
             if not result.success:
-                logger.warning(f"[Kodisc] Attempt 2 failed, waiting {ATTEMPT_DELAY}s before middle prompt...")
-                await asyncio.sleep(ATTEMPT_DELAY)
-                result = await kodisc_service.generate_video(
-                    prompt=middle_prompt,
-                    aspect_ratio="16:9",
-                    voiceover=False,
-                    colors=KODISC_COLORS
-                )
-                attempt = 3
-                used_prompt = "middle"
-
-            # === ATTEMPT 4: Guaranteed fallback ===
-            if not result.success:
-                logger.warning(f"[Kodisc] Attempt 3 failed, waiting {ATTEMPT_DELAY}s before fallback...")
+                logger.warning(f"[Kodisc] Attempt 2 failed, waiting {ATTEMPT_DELAY}s before text-only fallback...")
                 await asyncio.sleep(ATTEMPT_DELAY)
                 result = await kodisc_service.generate_video(
                     prompt=fallback_prompt,
@@ -1886,7 +1865,7 @@ async def _generate_kodisc_videos_background(job_id: str):
                     voiceover=False,
                     colors=KODISC_COLORS
                 )
-                attempt = 4
+                attempt = 3
                 used_prompt = "fallback"
 
             slide_id = f"s{slide_number:03d}"
@@ -1922,15 +1901,15 @@ async def _generate_kodisc_videos_background(job_id: str):
                     "prompt_used": used_prompt
                 })
             else:
-                # All 4 attempts failed (primary, primary-retry, pattern, fallback)
-                logger.error(f"[Kodisc] Slide {slide_number} failed after all 4 attempts")
+                # All 3 attempts failed (primary, retry, text-only fallback)
+                logger.error(f"[Kodisc] Slide {slide_number} failed after all 3 attempts")
                 slide_result = {
                     "slide_number": slide_number,
                     "slide_id": slide_id,
                     "title": title,
                     "status": "failed",
                     "error": result.error,
-                    "attempts": 4
+                    "attempts": 3
                 }
                 task["failed"] += 1
 
