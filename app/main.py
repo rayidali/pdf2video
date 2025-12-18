@@ -1819,10 +1819,19 @@ async def _generate_kodisc_videos_background(job_id: str):
                 f"Connect the circles with arrows pointing right."
             )
 
-            # Guaranteed fallback - ultra-simple but still with system prompt
+            # Guaranteed fallback - TEXT-ONLY PPT-style slide (almost 100% reliable)
+            # Format bullet points (max 3, max 40 chars each)
+            bullets = key_points[:3] if key_points else ["Key concept", "Main idea", "Summary"]
+            bullet_text = " | ".join([b[:40] for b in bullets])
+
             fallback_prompt = SYSTEM_PROMPT + (
-                f"Show the text '{title[:25]}' centered on screen. "
-                f"Add a blue circle below the text."
+                f"Create a minimal text-only slide like PowerPoint. BLACK background. "
+                f"Show the title '{title[:35]}' at the top center in WHITE, large font. "
+                f"Below it, show these 3 bullet points in WHITE, smaller font, left-aligned: "
+                f"• {bullets[0][:40] if len(bullets) > 0 else 'Point 1'} "
+                f"• {bullets[1][:40] if len(bullets) > 1 else 'Point 2'} "
+                f"• {bullets[2][:40] if len(bullets) > 2 else 'Point 3'} "
+                f"Use only simple FadeIn for the whole group. No other animations. Keep all text inside frame."
             )
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
