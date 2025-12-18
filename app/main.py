@@ -1816,14 +1816,16 @@ async def _generate_kodisc_videos_background(job_id: str):
             # Format bullet points (max 3, max 40 chars each)
             bullets = key_points[:3] if key_points else ["Key concept", "Main idea", "Summary"]
 
-            fallback_prompt = SYSTEM_PROMPT + (
-                f"Create a minimal text-only slide like PowerPoint. BLACK background. "
-                f"Show the title '{title[:35]}' at the top center in WHITE, large font. "
-                f"Below it, show these 3 bullet points in WHITE, smaller font, left-aligned: "
-                f"• {bullets[0][:40] if len(bullets) > 0 else 'Point 1'} "
-                f"• {bullets[1][:40] if len(bullets) > 1 else 'Point 2'} "
-                f"• {bullets[2][:40] if len(bullets) > 2 else 'Point 3'} "
-                f"Use only simple FadeIn for the whole group. No other animations. Keep all text inside frame."
+            # TRULY MINIMAL fallback - NO SYSTEM_PROMPT, ~200 chars max
+            # This should almost never fail because it's so simple
+            fallback_prompt = (
+                f"Black background. White text. "
+                f"Title: '{title[:25]}'. "
+                f"3 lines below: "
+                f"1. {bullets[0][:30] if len(bullets) > 0 else 'Point 1'} "
+                f"2. {bullets[1][:30] if len(bullets) > 1 else 'Point 2'} "
+                f"3. {bullets[2][:30] if len(bullets) > 2 else 'Point 3'} "
+                f"FadeIn once."
             )
 
             logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
