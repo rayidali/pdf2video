@@ -87,6 +87,22 @@ Conversational, tied to what's happening visually:
 10. Limitations - What's not solved
 11. Takeaway - Memorable summary
 
+## FALLBACK TEXT (Required for every slide!)
+For each slide, also provide FALLBACK text that will be shown if animation generation fails.
+These must be ultra-clean and simple:
+
+FALLBACK RULES:
+- fallback_title: Max 5 words, no punctuation, simple present tense
+- fallback_points: EXACTLY 3 bullet points, max 4 words each, no punctuation
+
+GOOD fallback examples:
+- fallback_title: "Attention Solves Long Context"
+- fallback_points: ["Queries find relevant keys", "Values carry information", "Scores weight importance"]
+
+BAD fallback examples:
+- fallback_title: "How Attention Mechanisms Work!" (has punctuation)
+- fallback_points: ["The query vector is used to..."] (too long)
+
 ## OUTPUT FORMAT
 {
   "paper_title": "Catchy 3-5 word title",
@@ -101,12 +117,15 @@ Conversational, tied to what's happening visually:
       "key_points": ["Point 1", "Point 2"],
       "voiceover_script": "3-4 conversational sentences tied to the visual.",
       "duration_seconds": 40,
-      "transition_note": "Connection to next slide"
+      "transition_note": "Connection to next slide",
+      "fallback_title": "Max Five Words Here",
+      "fallback_points": ["Point max four words", "Another short point", "Third brief point"]
     }
   ]
 }
 
-CRITICAL: visual_type MUST be one of: diagram, equation, graph, comparison, text_reveal, timeline"""
+CRITICAL: visual_type MUST be one of: diagram, equation, graph, comparison, text_reveal, timeline
+CRITICAL: Every slide MUST have fallback_title and fallback_points (exactly 3)"""
 
 
 class PlanningService:

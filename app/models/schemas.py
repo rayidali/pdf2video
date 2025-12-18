@@ -35,6 +35,16 @@ class SlideContent(BaseModel):
         default=None,
         description="How this connects to the next slide"
     )
+    # Fallback text for when animation generation fails
+    # Pre-generated during planning for clean, consistent fallback slides
+    fallback_title: str = Field(
+        default="",
+        description="Short title for fallback slide (max 5 words, no punctuation)"
+    )
+    fallback_points: List[str] = Field(
+        default_factory=list,
+        description="Exactly 3 bullet points for fallback (max 4 words each, no punctuation)"
+    )
 
 
 class PresentationPlan(BaseModel):

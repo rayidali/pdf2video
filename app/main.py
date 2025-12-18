@@ -1797,6 +1797,10 @@ async def _generate_kodisc_videos_background(job_id: str):
             title = slide.get("title", f"Slide {slide_number}")
             key_points = slide.get("key_points", [])
 
+            # Pre-generated fallback text (clean, consistent)
+            fallback_title = slide.get("fallback_title", title[:25])
+            fallback_points = slide.get("fallback_points", [])
+
             task["current_slide"] = slide_number
             task["current_title"] = title
 
@@ -1817,19 +1821,23 @@ async def _generate_kodisc_videos_background(job_id: str):
                 else f"Create a simple diagram explaining {title}"
             )
 
-            # Fallback - TEXT-ONLY PPT-style slide (almost 100% reliable)
-            # Format bullet points (max 3, max 40 chars each)
-            bullets = key_points[:3] if key_points else ["Key concept", "Main idea", "Summary"]
+            # Fallback - TEXT-ONLY PPT-style slide using PRE-GENERATED clean text
+            # Use fallback_title and fallback_points from planning (if available)
+            # Otherwise fall back to key_points
+            if fallback_points and len(fallback_points) >= 3:
+                fb_points = fallback_points[:3]
+            else:
+                fb_points = key_points[:3] if key_points else ["Key concept", "Main idea", "Summary"]
 
             # TRULY MINIMAL fallback - NO SYSTEM_PROMPT, ~200 chars max
-            # This should almost never fail because it's so simple
+            # Uses pre-generated clean text from planning phase
             fallback_prompt = (
                 f"Black background. White text. "
-                f"Title: '{title[:25]}'. "
+                f"Title: '{fallback_title[:25]}'. "
                 f"3 lines below: "
-                f"1. {bullets[0][:30] if len(bullets) > 0 else 'Point 1'} "
-                f"2. {bullets[1][:30] if len(bullets) > 1 else 'Point 2'} "
-                f"3. {bullets[2][:30] if len(bullets) > 2 else 'Point 3'} "
+                f"1. {fb_points[0][:30] if len(fb_points) > 0 else 'Point 1'} "
+                f"2. {fb_points[1][:30] if len(fb_points) > 1 else 'Point 2'} "
+                f"3. {fb_points[2][:30] if len(fb_points) > 2 else 'Point 3'} "
                 f"FadeIn once."
             )
 
