@@ -99,10 +99,37 @@ removeFileBtn.addEventListener('click', () => {
 
 // Workflow elements
 const workflowSection = document.getElementById('workflow-section');
+const workflowSpacer = document.getElementById('workflow-spacer');
+const workflowStatus = document.getElementById('workflow-status');
 const beginWorkflowBtn = document.getElementById('begin-workflow-btn');
 const cancelWorkflowBtn = document.getElementById('cancel-workflow-btn');
 const workflowCurrentTask = document.getElementById('workflow-current-task');
+const workflowEta = document.getElementById('workflow-eta');
 let workflowCancelled = false;
+let workflowStartTime = null;
+
+// Estimated times for each stage (in seconds)
+const STAGE_TIMES = {
+    ocr: 30,
+    plan: 45,
+    videos: 300,  // 5 minutes for ~11 slides
+    voiceovers: 120,  // 2 minutes
+    final: 180  // 3 minutes
+};
+
+// Make workflow sticky on scroll
+window.addEventListener('scroll', () => {
+    if (!workflowSection || workflowSection.classList.contains('hidden')) return;
+
+    const rect = workflowSection.getBoundingClientRect();
+    if (rect.top <= 0 && !workflowSection.classList.contains('sticky')) {
+        workflowSection.classList.add('sticky');
+        if (workflowSpacer) workflowSpacer.classList.add('active');
+    } else if (rect.top > 0 || (workflowSpacer && workflowSpacer.getBoundingClientRect().top > 0)) {
+        workflowSection.classList.remove('sticky');
+        if (workflowSpacer) workflowSpacer.classList.remove('active');
+    }
+});
 
 // Upload - now shows workflow section
 uploadBtn.addEventListener('click', async () => {
@@ -164,9 +191,33 @@ function updateWorkflowStep(step, status, description) {
     }
 }
 
-function setWorkflowStatus(message) {
+function setWorkflowStatus(message, currentStage = null) {
     if (workflowCurrentTask) {
         workflowCurrentTask.textContent = message;
+    }
+
+    // Update ETA based on current stage
+    if (currentStage && workflowEta) {
+        const stages = ['ocr', 'plan', 'videos', 'voiceovers', 'final'];
+        const currentIndex = stages.indexOf(currentStage);
+        if (currentIndex >= 0) {
+            let remainingTime = 0;
+            for (let i = currentIndex; i < stages.length; i++) {
+                remainingTime += STAGE_TIMES[stages[i]];
+            }
+            const minutes = Math.ceil(remainingTime / 60);
+            workflowEta.textContent = `Estimated time remaining: ~${minutes} min`;
+        }
+    }
+
+    // Show/hide spinner
+    if (workflowStatus) {
+        if (message.includes('complete') || message.includes('Ready')) {
+            workflowStatus.classList.remove('processing');
+            if (workflowEta) workflowEta.textContent = '';
+        } else {
+            workflowStatus.classList.add('processing');
+        }
     }
 }
 
@@ -204,10 +255,12 @@ if (cancelWorkflowBtn) {
 }
 
 async function runAutomatedWorkflow() {
+    workflowStartTime = Date.now();
+
     // Stage 1: OCR
     if (workflowCancelled) return;
     updateWorkflowStep('ocr', 'active', 'Extracting text from PDF...');
-    setWorkflowStatus('Running OCR with Mistral...');
+    setWorkflowStatus('Running OCR with Mistral...', 'ocr');
 
     try {
         const ocrResponse = await fetch(`/api/process/${currentJobId}`, { method: 'POST' });
@@ -219,7 +272,6 @@ async function runAutomatedWorkflow() {
 
         updateWorkflowStep('ocr', 'completed', 'Text extracted successfully');
         resultsSection.classList.remove('hidden');
-        resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
         showToast('OCR completed!', 'success');
     } catch (error) {
         updateWorkflowStep('ocr', 'error', 'OCR failed: ' + error.message);
@@ -230,7 +282,7 @@ async function runAutomatedWorkflow() {
     if (workflowCancelled) return;
     await new Promise(r => setTimeout(r, 1000)); // Brief pause
     updateWorkflowStep('plan', 'active', 'Claude is creating the video plan...');
-    setWorkflowStatus('Generating presentation plan with Claude...');
+    setWorkflowStatus('Generating presentation plan with Claude...', 'plan');
 
     try {
         const planResponse = await fetch(`/api/plan/${currentJobId}`, { method: 'POST' });
@@ -243,7 +295,6 @@ async function runAutomatedWorkflow() {
         planSection.classList.remove('hidden');
         planContent.classList.remove('hidden');
         planSpinner.classList.add('hidden');
-        planSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
         showToast('Plan generated!', 'success');
     } catch (error) {
         updateWorkflowStep('plan', 'error', 'Plan failed: ' + error.message);
@@ -254,7 +305,7 @@ async function runAutomatedWorkflow() {
     if (workflowCancelled) return;
     await new Promise(r => setTimeout(r, 1000));
     updateWorkflowStep('videos', 'active', 'Generating animated videos...');
-    setWorkflowStatus('Creating animations with Kodisc...');
+    setWorkflowStatus('Creating animations with Kodisc...', 'videos');
 
     try {
         const startResponse = await fetch(`/api/kodisc/${currentJobId}/start`, { method: 'POST' });
@@ -272,7 +323,7 @@ async function runAutomatedWorkflow() {
             const progress = await progressResponse.json();
 
             updateWorkflowStep('videos', 'active', `Generating video ${progress.completed_slides}/${totalSlides}...`);
-            setWorkflowStatus(`Creating animation: ${progress.current_title || 'Processing...'}`);
+            setWorkflowStatus(`Creating animation: ${progress.current_title || 'Processing...'}`, 'videos');
 
             if (progress.status === 'complete') {
                 displayVideoResults(progress.results);
@@ -280,7 +331,6 @@ async function runAutomatedWorkflow() {
                 manimSection.classList.remove('hidden');
                 manimContent.classList.remove('hidden');
                 manimSpinner.classList.add('hidden');
-                manimSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 showToast('Videos generated!', 'success');
                 break;
             }
@@ -298,7 +348,7 @@ async function runAutomatedWorkflow() {
     if (workflowCancelled) return;
     await new Promise(r => setTimeout(r, 1000));
     updateWorkflowStep('voiceovers', 'active', 'Generating voice narration...');
-    setWorkflowStatus('Creating voiceovers with ElevenLabs...');
+    setWorkflowStatus('Creating voiceovers with ElevenLabs...', 'voiceovers');
 
     try {
         const voiceStartResponse = await fetch(`/api/voiceover/${currentJobId}/start`, { method: 'POST' });
@@ -316,7 +366,7 @@ async function runAutomatedWorkflow() {
             const progress = await progressResponse.json();
 
             updateWorkflowStep('voiceovers', 'active', `Generating voiceover ${progress.completed_slides}/${totalVoiceovers}...`);
-            setWorkflowStatus(`Creating narration: ${progress.current_title || 'Processing...'}`);
+            setWorkflowStatus(`Creating narration: ${progress.current_title || 'Processing...'}`, 'voiceovers');
 
             if (progress.status === 'complete') {
                 displayVoiceoverResults(progress.results);
@@ -324,7 +374,6 @@ async function runAutomatedWorkflow() {
                 voiceoverSection.classList.remove('hidden');
                 voiceoverContent.classList.remove('hidden');
                 voiceoverSpinner.classList.add('hidden');
-                voiceoverSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 showToast('Voiceovers generated!', 'success');
                 break;
             }
@@ -342,7 +391,7 @@ async function runAutomatedWorkflow() {
     if (workflowCancelled) return;
     await new Promise(r => setTimeout(r, 1000));
     updateWorkflowStep('final', 'active', 'Assembling final video...');
-    setWorkflowStatus('Rendering final video with Shotstack...');
+    setWorkflowStatus('Rendering final video with Shotstack...', 'final');
 
     try {
         const renderResponse = await fetch(`/api/shotstack/${currentJobId}/render`, { method: 'POST' });
@@ -358,7 +407,7 @@ async function runAutomatedWorkflow() {
 
             const statusText = progress.shotstack_status || progress.status || 'processing';
             updateWorkflowStep('final', 'active', `Rendering: ${statusText}...`);
-            setWorkflowStatus(`Shotstack status: ${statusText}`);
+            setWorkflowStatus(`Shotstack status: ${statusText}`, 'final');
 
             if (progress.status === 'complete' && progress.video_url) {
                 displayFinalVideo(progress.video_url);
@@ -369,6 +418,9 @@ async function runAutomatedWorkflow() {
                 finalVideoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 showToast('Final video ready!', 'success');
                 setWorkflowStatus('Workflow complete! Your video is ready.');
+                // Remove sticky mode when complete
+                workflowSection.classList.remove('sticky');
+                if (workflowSpacer) workflowSpacer.classList.remove('active');
                 break;
             }
 
@@ -879,6 +931,7 @@ function resetToUpload() {
     currentJobId = null;
     fileInput.value = '';
     workflowCancelled = false;
+    workflowStartTime = null;
 
     // Reset UI
     dropZone.classList.remove('hidden');
@@ -887,12 +940,6 @@ function resetToUpload() {
     uploadBtn.textContent = 'Upload PDF';
     processBtn.classList.remove('hidden');
     processingSpinner.classList.add('hidden');
-    planBtn.disabled = false;
-    planBtn.textContent = 'Generate Plan';
-    manimBtn.disabled = false;
-    manimBtn.textContent = 'Generate Videos';
-    voiceoverBtn.disabled = false;
-    voiceoverBtn.textContent = 'Generate Voiceovers';
 
     // Reset workflow steps
     document.querySelectorAll('.workflow-step').forEach(step => {
@@ -919,6 +966,19 @@ function resetToUpload() {
     }
     if (workflowCurrentTask) {
         workflowCurrentTask.textContent = 'Ready to begin...';
+    }
+    if (workflowEta) {
+        workflowEta.textContent = '';
+    }
+    if (workflowStatus) {
+        workflowStatus.classList.remove('processing');
+    }
+    // Reset sticky state
+    if (workflowSection) {
+        workflowSection.classList.remove('sticky');
+    }
+    if (workflowSpacer) {
+        workflowSpacer.classList.remove('active');
     }
 
     // Hide all sections

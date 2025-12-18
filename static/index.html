@@ -125,12 +125,19 @@
                         </div>
                     </div>
                     <div id="workflow-status" class="workflow-status">
-                        <p id="workflow-current-task">Ready to begin...</p>
+                        <div class="workflow-spinner"></div>
+                        <div class="workflow-text">
+                            <p id="workflow-current-task">Ready to begin...</p>
+                            <p id="workflow-eta"></p>
+                        </div>
                     </div>
                     <button id="begin-workflow-btn" class="btn btn-dark btn-full">Begin Workflow</button>
                     <button id="cancel-workflow-btn" class="btn btn-full hidden">Cancel Workflow</button>
                 </div>
             </section>
+
+            <!-- Spacer for sticky workflow -->
+            <div id="workflow-spacer" class="workflow-spacer"></div>
 
             <!-- Processing Section -->
             <section id="processing-section" class="card hidden">
@@ -178,8 +185,6 @@
                     </div>
                     <div class="results-actions">
                         <button id="copy-btn" class="btn">Copy Markdown</button>
-                        <button id="plan-btn" class="btn btn-dark">Generate Plan</button>
-                        <button id="new-upload-btn-results" class="btn">New Upload</button>
                     </div>
                 </div>
             </section>
@@ -213,9 +218,7 @@
                             <pre id="plan-json" class="markdown-raw"></pre>
                         </div>
                         <div class="results-actions">
-                            <button id="back-to-results-btn" class="btn">Back to OCR</button>
                             <button id="copy-plan-btn" class="btn">Copy JSON</button>
-                            <button id="manim-btn" class="btn btn-dark">Generate Videos</button>
                         </div>
                     </div>
                 </div>
@@ -241,11 +244,6 @@
                             <p>Generated <span id="manim-slides-count"></span> video clips</p>
                         </div>
                         <div id="manim-slides-container" class="slides-container"></div>
-                        <div class="results-actions">
-                            <button id="back-to-plan-btn" class="btn">Back to Plan</button>
-                            <button id="voiceover-btn" class="btn btn-dark">Generate Voiceovers</button>
-                            <button id="new-upload-btn" class="btn">New Upload</button>
-                        </div>
                     </div>
                 </div>
             </section>
@@ -270,11 +268,6 @@
                             <p>Generated <span id="voiceover-slides-count"></span> audio clips</p>
                         </div>
                         <div id="voiceover-slides-container" class="slides-container"></div>
-                        <div class="results-actions">
-                            <button id="back-to-videos-btn" class="btn">Back to Videos</button>
-                            <button id="final-video-btn" class="btn btn-dark">Generate Final Video</button>
-                            <button id="new-upload-btn-voiceover" class="btn">New Upload</button>
-                        </div>
                     </div>
                 </div>
             </section>
@@ -301,7 +294,6 @@
                             </video>
                         </div>
                         <div class="results-actions">
-                            <button id="back-to-voiceovers-btn" class="btn">Back to Voiceovers</button>
                             <a id="download-final-video-btn" class="btn btn-dark" download>Download Video</a>
                             <button id="new-upload-btn-final" class="btn">New Upload</button>
                         </div>
