@@ -652,6 +652,7 @@ function resetToUpload() {
     planSection.classList.add('hidden');
     manimSection.classList.add('hidden');
     voiceoverSection.classList.add('hidden');
+    if (finalVideoSection) finalVideoSection.classList.add('hidden');
     uploadSection.classList.remove('hidden');
 }
 
@@ -1167,3 +1168,191 @@ async function checkVoiceoversExist() {
 
 // Load jobs when the page loads
 document.addEventListener('DOMContentLoaded', loadJobs);
+
+// ============================================
+// FINAL VIDEO GENERATION (Shotstack)
+// ============================================
+
+const finalVideoBtn = document.getElementById('final-video-btn');
+const finalVideoSection = document.getElementById('final-video-section');
+const finalVideoSpinner = document.getElementById('final-video-spinner');
+const finalVideoContent = document.getElementById('final-video-content');
+const finalVideoPlayer = document.getElementById('final-video-player');
+const downloadFinalVideoBtn = document.getElementById('download-final-video-btn');
+
+// Generate Final Video button click handler
+if (finalVideoBtn) {
+    finalVideoBtn.addEventListener('click', async () => {
+        console.log('Final Video button clicked!');
+
+        if (!currentJobId) {
+            console.error('No job ID found');
+            showToast('No job ID found. Please select or upload a PDF first.', 'error');
+            return;
+        }
+
+        console.log('=== Final Video Generation via Shotstack ===');
+        console.log('Job ID:', currentJobId);
+
+        finalVideoBtn.disabled = true;
+        finalVideoBtn.textContent = 'Checking...';
+
+        try {
+            // First check if final video already exists (cached)
+            console.log('Checking for cached final video...');
+            const cacheResponse = await fetch(`/api/shotstack/${currentJobId}/progress`);
+
+            if (cacheResponse.ok) {
+                const cacheData = await cacheResponse.json();
+
+                // If we have cached results, show them directly
+                if (cacheData.status === 'complete' && cacheData.video_url) {
+                    console.log('Found cached final video:', cacheData.video_url);
+                    displayFinalVideo(cacheData.video_url);
+
+                    finalVideoSection.classList.remove('hidden');
+                    finalVideoSpinner.classList.add('hidden');
+                    finalVideoContent.classList.remove('hidden');
+                    voiceoverSection.classList.add('hidden');
+
+                    finalVideoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                    showToast('Loaded cached final video', 'success');
+                    finalVideoBtn.disabled = false;
+                    finalVideoBtn.textContent = 'Generate Final Video';
+                    return;
+                }
+            }
+
+            // No cached video - start generation
+            console.log('No cached final video found, starting generation...');
+
+            // Show final video section with spinner
+            finalVideoSection.classList.remove('hidden');
+            finalVideoSpinner.classList.remove('hidden');
+            finalVideoContent.classList.add('hidden');
+
+            // Scroll to final video section so user can see the spinner
+            finalVideoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+            // Start background generation via Shotstack API
+            console.log('Calling API: POST /api/shotstack/' + currentJobId + '/render');
+            const response = await fetch(`/api/shotstack/${currentJobId}/render`, {
+                method: 'POST'
+            });
+
+            console.log('Response status:', response.status);
+
+            if (!response.ok) {
+                const error = await response.json();
+                console.error('API Error:', error);
+                throw new Error(error.detail || 'Failed to start final video rendering');
+            }
+
+            const data = await response.json();
+            console.log('Rendering started:', data);
+
+            // Poll for progress
+            finalVideoBtn.textContent = 'Rendering...';
+            await pollFinalVideoProgress(currentJobId);
+
+        } catch (error) {
+            console.error('Final video generation failed:', error);
+            showToast(error.message, 'error');
+            finalVideoSpinner.classList.add('hidden');
+            finalVideoSection.classList.add('hidden');
+            finalVideoBtn.disabled = false;
+            finalVideoBtn.textContent = 'Generate Final Video';
+        }
+    });
+} else {
+    console.error('Final Video button not found in DOM!');
+}
+
+// Poll for Final Video rendering progress
+async function pollFinalVideoProgress(jobId) {
+    const pollInterval = 5000; // 5 seconds (Shotstack rendering takes time)
+
+    while (true) {
+        try {
+            const response = await fetch(`/api/shotstack/${jobId}/progress`);
+            const progress = await response.json();
+
+            console.log('Progress:', progress);
+
+            // Update spinner text
+            const spinnerText = finalVideoSpinner.querySelector('p');
+            if (spinnerText) {
+                const statusText = progress.shotstack_status || progress.status || 'processing';
+                spinnerText.textContent = `Rendering final video... Status: ${statusText}`;
+            }
+
+            if (progress.status === 'complete' && progress.video_url) {
+                // Generation complete - show results
+                displayFinalVideo(progress.video_url);
+                finalVideoSpinner.classList.add('hidden');
+                finalVideoContent.classList.remove('hidden');
+                voiceoverSection.classList.add('hidden');
+
+                showToast('Final video rendered successfully!', 'success');
+                console.log('=== Final Video Generation Complete ===');
+                finalVideoBtn.textContent = 'Generate Final Video';
+                finalVideoBtn.disabled = false;
+                return;
+            }
+
+            if (progress.status === 'failed' || progress.status === 'error') {
+                throw new Error(progress.error || 'Final video rendering failed');
+            }
+
+            // Wait before polling again
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+        } catch (error) {
+            console.error('Progress polling error:', error);
+            throw error;
+        }
+    }
+}
+
+// Display Final Video
+function displayFinalVideo(videoUrl) {
+    finalVideoPlayer.src = videoUrl;
+    downloadFinalVideoBtn.href = videoUrl;
+    downloadFinalVideoBtn.download = 'final-video.mp4';
+}
+
+// Back to Voiceovers button (from final video section)
+const backToVoiceoversBtn = document.getElementById('back-to-voiceovers-btn');
+if (backToVoiceoversBtn) {
+    backToVoiceoversBtn.addEventListener('click', async () => {
+        finalVideoSection.classList.add('hidden');
+        voiceoverSection.classList.remove('hidden');
+        voiceoverContent.classList.remove('hidden');
+        voiceoverSpinner.classList.add('hidden');
+
+        // Check if final video already exists - if so, show "View Final Video" button
+        if (finalVideoBtn) finalVideoBtn.disabled = false;
+        try {
+            const response = await fetch(`/api/shotstack/${currentJobId}/progress`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.status === 'complete' && data.video_url) {
+                    if (finalVideoBtn) finalVideoBtn.textContent = 'View Final Video';
+                } else {
+                    if (finalVideoBtn) finalVideoBtn.textContent = 'Generate Final Video';
+                }
+            } else {
+                if (finalVideoBtn) finalVideoBtn.textContent = 'Generate Final Video';
+            }
+        } catch (e) {
+            if (finalVideoBtn) finalVideoBtn.textContent = 'Generate Final Video';
+        }
+    });
+}
+
+// New Upload button in final video section
+const newUploadBtnFinal = document.getElementById('new-upload-btn-final');
+if (newUploadBtnFinal) {
+    newUploadBtnFinal.addEventListener('click', resetToUpload);
+}
