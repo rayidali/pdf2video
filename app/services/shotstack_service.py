@@ -76,13 +76,13 @@ class ShotstackService:
         slides: List[SlideAsset],
         min_clip_duration: float = 5.0,
         estimated_video_duration: float = 7.0,
-        trim_end: float = 0.5
+        trim_end: float = 2.0
     ) -> dict:
         """
         Build Shotstack timeline JSON from slide assets.
 
         Loops video clips to fill audio duration (avoids freezing on black frames).
-        Trims the last 0.5s from each video to avoid fade-out black frames.
+        Trims the last 2s from each video to avoid fade-out black frames.
 
         Args:
             slides: List of SlideAsset with video/audio URLs
