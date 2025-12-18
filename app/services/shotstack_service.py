@@ -74,7 +74,6 @@ class ShotstackService:
     def _build_timeline(
         self,
         slides: List[SlideAsset],
-        transition_duration: float = 0.5,
         min_clip_duration: float = 5.0
     ) -> dict:
         """
@@ -85,7 +84,6 @@ class ShotstackService:
 
         Args:
             slides: List of SlideAsset with video/audio URLs
-            transition_duration: Fade transition duration in seconds
             min_clip_duration: Minimum clip duration if no audio
 
         Returns:
@@ -109,16 +107,8 @@ class ShotstackService:
                     "volume": 0  # Mute original video audio
                 },
                 "start": current_time,
-                "length": clip_duration,
-                "transition": {
-                    "in": "fade" if slide.slide_number > 1 else None,
-                    "out": "fade"
-                }
+                "length": clip_duration
             }
-            # Remove None transition
-            video_clip["transition"] = {k: v for k, v in video_clip["transition"].items() if v}
-            if not video_clip["transition"]:
-                del video_clip["transition"]
 
             video_clips.append(video_clip)
 
