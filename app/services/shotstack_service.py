@@ -75,19 +75,20 @@ class ShotstackService:
         self,
         slides: List[SlideAsset],
         min_clip_duration: float = 5.0,
-        trim_end: float = 2.5
+        max_video_playback: float = 5.5
     ) -> dict:
         """
         Build Shotstack timeline JSON from slide assets.
 
-        Uses freeze-frame technique: extends clip length to match audio duration.
-        Shotstack automatically freezes the last visible frame when clip length
-        exceeds video duration.
+        Uses freeze-frame technique:
+        1. Play only the first max_video_playback seconds of each video (before fade-out)
+        2. Set clip length to audio duration
+        3. Shotstack freezes the last visible frame until clip ends
 
         Args:
             slides: List of SlideAsset with video/audio URLs
             min_clip_duration: Minimum clip duration if no audio
-            trim_end: Seconds to trim from end of video (avoid fade-out black frames)
+            max_video_playback: Max seconds of video to play before freezing (avoids fade-to-black)
 
         Returns:
             Timeline dict for Shotstack API
@@ -102,17 +103,18 @@ class ShotstackService:
             # - Otherwise use minimum duration
             clip_duration = slide.audio_duration if slide.audio_duration else min_clip_duration
 
-            # Video clip - set length to audio duration for freeze-frame effect
-            # Shotstack will play video then freeze last frame until clip_duration
-            # Note: Videos are ~7s, audio is ~25-30s, so last frame freezes for ~20s
+            # Video clip with trim to avoid fade-to-black
+            # trim: only use first N seconds of source video
+            # length: total clip duration (Shotstack freezes last frame to fill)
             video_clip = {
                 "asset": {
                     "type": "video",
                     "src": slide.video_url,
+                    "trim": max_video_playback,  # Only play first 5.5s of video
                     "volume": 0  # Mute original video audio
                 },
                 "start": current_time,
-                "length": clip_duration
+                "length": clip_duration  # Audio duration - freezes last frame to fill
             }
             video_clips.append(video_clip)
 
