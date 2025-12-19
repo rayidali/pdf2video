@@ -11,10 +11,43 @@ Pricing: https://shotstack.io/pricing/
 import httpx
 import asyncio
 import logging
+import subprocess
 from typing import Optional, List
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+
+def get_video_duration(video_url: str) -> Optional[float]:
+    """
+    Get video duration in seconds using ffprobe.
+
+    Args:
+        video_url: URL to the video file
+
+    Returns:
+        Duration in seconds, or None if unable to determine
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                video_url
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            duration = float(result.stdout.strip())
+            logger.debug(f"Video duration for {video_url}: {duration}s")
+            return duration
+    except Exception as e:
+        logger.warning(f"Could not get video duration for {video_url}: {e}")
+    return None
 
 # Shotstack API endpoints
 SHOTSTACK_STAGE_URL = "https://api.shotstack.io/stage"
@@ -75,20 +108,21 @@ class ShotstackService:
         self,
         slides: List[SlideAsset],
         min_clip_duration: float = 5.0,
-        max_video_playback: float = 5.5
+        trim_before_end: float = 2.5
     ) -> dict:
         """
         Build Shotstack timeline JSON from slide assets.
 
         Uses freeze-frame technique:
-        1. Play only the first max_video_playback seconds of each video (before fade-out)
-        2. Set clip length to audio duration
-        3. Shotstack freezes the last visible frame until clip ends
+        1. Probe each video to get its duration
+        2. Calculate trim = video_duration - trim_before_end (avoid fade-to-black)
+        3. Set clip length to audio duration
+        4. Shotstack freezes the last visible frame until clip ends
 
         Args:
             slides: List of SlideAsset with video/audio URLs
             min_clip_duration: Minimum clip duration if no audio
-            max_video_playback: Max seconds of video to play before freezing (avoids fade-to-black)
+            trim_before_end: Seconds before video end to freeze (avoids fade-to-black)
 
         Returns:
             Timeline dict for Shotstack API
@@ -103,16 +137,27 @@ class ShotstackService:
             # - Otherwise use minimum duration
             clip_duration = slide.audio_duration if slide.audio_duration else min_clip_duration
 
-            # Video clip with trim to avoid fade-to-black
-            # trim: only use first N seconds of source video
-            # length: total clip duration (Shotstack freezes last frame to fill)
+            # Get video duration to calculate trim point
+            video_duration = get_video_duration(slide.video_url)
+
+            # Build video asset
+            video_asset = {
+                "type": "video",
+                "src": slide.video_url,
+                "volume": 0  # Mute original video audio
+            }
+
+            # Add trim if we know the video duration
+            # trim = how many seconds of the source video to use
+            if video_duration and video_duration > trim_before_end:
+                trim_duration = video_duration - trim_before_end
+                video_asset["trim"] = trim_duration
+                logger.info(f"Slide {slide.slide_number}: video={video_duration:.1f}s, trim to {trim_duration:.1f}s (freeze {trim_before_end}s before end)")
+            else:
+                logger.warning(f"Slide {slide.slide_number}: couldn't get video duration, no trim applied")
+
             video_clip = {
-                "asset": {
-                    "type": "video",
-                    "src": slide.video_url,
-                    "trim": max_video_playback,  # Only play first 5.5s of video
-                    "volume": 0  # Mute original video audio
-                },
+                "asset": video_asset,
                 "start": current_time,
                 "length": clip_duration  # Audio duration - freezes last frame to fill
             }
