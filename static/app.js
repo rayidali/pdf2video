@@ -41,6 +41,12 @@ const voiceoverSpinner = document.getElementById('voiceover-spinner');
 const voiceoverContent = document.getElementById('voiceover-content');
 const voiceoverSlidesCount = document.getElementById('voiceover-slides-count');
 const voiceoverSlidesContainer = document.getElementById('voiceover-slides-container');
+const finalVideoBtn = document.getElementById('final-video-btn');
+const finalVideoSection = document.getElementById('final-video-section');
+const finalVideoSpinner = document.getElementById('final-video-spinner');
+const finalVideoContent = document.getElementById('final-video-content');
+const finalVideoPlayer = document.getElementById('final-video-player');
+const downloadFinalVideoBtn = document.getElementById('download-final-video-btn');
 
 // State
 let selectedFile = null;
@@ -1328,13 +1334,6 @@ async function checkVoiceoversExist() {
 // ============================================
 // FINAL VIDEO GENERATION (Shotstack)
 // ============================================
-
-const finalVideoBtn = document.getElementById('final-video-btn');
-const finalVideoSection = document.getElementById('final-video-section');
-const finalVideoSpinner = document.getElementById('final-video-spinner');
-const finalVideoContent = document.getElementById('final-video-content');
-const finalVideoPlayer = document.getElementById('final-video-player');
-const downloadFinalVideoBtn = document.getElementById('download-final-video-btn');
 
 // Generate Final Video button click handler
 if (finalVideoBtn) {
