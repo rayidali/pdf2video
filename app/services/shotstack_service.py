@@ -12,6 +12,9 @@ import httpx
 import asyncio
 import logging
 import subprocess
+import tempfile
+import os
+from pathlib import Path
 from typing import Optional, List
 from dataclasses import dataclass
 
@@ -48,6 +51,61 @@ def get_video_duration(video_url: str) -> Optional[float]:
     except Exception as e:
         logger.warning(f"Could not get video duration for {video_url}: {e}")
     return None
+
+
+def trim_video_end(video_url: str, output_path: Path, trim_seconds: float = 2.5) -> Optional[str]:
+    """
+    Download and trim the last N seconds from a video using ffmpeg.
+
+    Args:
+        video_url: URL to the source video
+        output_path: Path to save the trimmed video
+        trim_seconds: Seconds to trim from the end
+
+    Returns:
+        Path to trimmed video, or None if failed
+    """
+    try:
+        # Get video duration
+        duration = get_video_duration(video_url)
+        if not duration:
+            logger.error(f"Could not get duration for {video_url}")
+            return None
+
+        # Calculate new duration (remove last N seconds)
+        new_duration = duration - trim_seconds
+        if new_duration <= 0:
+            logger.error(f"Video too short to trim {trim_seconds}s from {duration}s video")
+            return None
+
+        # Ensure output directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Use ffmpeg to trim: -t specifies output duration from start
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",  # Overwrite output
+                "-i", video_url,
+                "-t", str(new_duration),  # Output duration (keeps first N seconds)
+                "-c", "copy",  # Copy codecs (fast, no re-encoding)
+                str(output_path)
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+
+        if result.returncode == 0 and output_path.exists():
+            logger.info(f"Trimmed video: {duration:.1f}s -> {new_duration:.1f}s, saved to {output_path}")
+            return str(output_path)
+        else:
+            logger.error(f"ffmpeg failed: {result.stderr}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Error trimming video: {e}")
+        return None
 
 # Shotstack API endpoints
 SHOTSTACK_STAGE_URL = "https://api.shotstack.io/stage"
@@ -107,22 +165,19 @@ class ShotstackService:
     def _build_timeline(
         self,
         slides: List[SlideAsset],
-        min_clip_duration: float = 5.0,
-        trim_before_end: float = 2.5
+        min_clip_duration: float = 5.0
     ) -> dict:
         """
         Build Shotstack timeline JSON from slide assets.
 
         Uses freeze-frame technique:
-        1. Probe each video to get its duration
-        2. Calculate trim = video_duration - trim_before_end (avoid fade-to-black)
-        3. Set clip length to audio duration
-        4. Shotstack freezes the last visible frame until clip ends
+        - Videos should be pre-trimmed (fade-to-black removed) before calling this
+        - Set clip length to audio duration
+        - Shotstack freezes the last visible frame until clip ends
 
         Args:
-            slides: List of SlideAsset with video/audio URLs
+            slides: List of SlideAsset with video/audio URLs (videos should be pre-trimmed)
             min_clip_duration: Minimum clip duration if no audio
-            trim_before_end: Seconds before video end to freeze (avoids fade-to-black)
 
         Returns:
             Timeline dict for Shotstack API
@@ -137,31 +192,19 @@ class ShotstackService:
             # - Otherwise use minimum duration
             clip_duration = slide.audio_duration if slide.audio_duration else min_clip_duration
 
-            # Get video duration to calculate trim point
-            video_duration = get_video_duration(slide.video_url)
-
-            # Build video asset
-            video_asset = {
-                "type": "video",
-                "src": slide.video_url,
-                "volume": 0  # Mute original video audio
-            }
-
-            # Add trim if we know the video duration
-            # trim = how many seconds of the source video to use
-            if video_duration and video_duration > trim_before_end:
-                trim_duration = video_duration - trim_before_end
-                video_asset["trim"] = trim_duration
-                logger.info(f"Slide {slide.slide_number}: video={video_duration:.1f}s, trim to {trim_duration:.1f}s (freeze {trim_before_end}s before end)")
-            else:
-                logger.warning(f"Slide {slide.slide_number}: couldn't get video duration, no trim applied")
-
+            # Video clip - videos are pre-trimmed, just set length to audio duration
+            # Shotstack will play the video then freeze the last frame until clip ends
             video_clip = {
-                "asset": video_asset,
+                "asset": {
+                    "type": "video",
+                    "src": slide.video_url,
+                    "volume": 0  # Mute original video audio
+                },
                 "start": current_time,
                 "length": clip_duration  # Audio duration - freezes last frame to fill
             }
             video_clips.append(video_clip)
+            logger.info(f"Slide {slide.slide_number}: clip_duration={clip_duration:.1f}s")
 
             # Audio clip (on separate track - top layer)
             if slide.audio_url and slide.audio_duration:
