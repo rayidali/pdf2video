@@ -2499,9 +2499,9 @@ async def _render_final_video_background(job_id: str):
         # Create lookup for audio by slide number
         audio_by_slide = {a["slide_number"]: a for a in audio_manifest}
 
-        # Trim videos to remove fade-to-black at end (2.5 seconds)
+        # Trim videos to remove fade-to-black at end (1.8 seconds)
         # This is done BEFORE sending to Shotstack since Shotstack can't trim from the end
-        TRIM_BEFORE_END = 2.5
+        TRIM_BEFORE_END = 1.8
         trimmed_dir = settings.OUTPUTS_DIR / job_id / "videos" / "trimmed"
         trimmed_dir.mkdir(parents=True, exist_ok=True)
 
