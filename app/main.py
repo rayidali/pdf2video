@@ -18,7 +18,7 @@ from app.services.render_service import GenerativeManimService
 from app.services.kodisc_service import KodiscService
 from app.services.elevenlabs_service import ElevenLabsService
 from app.services.r2_service import R2Service
-from app.services.shotstack_service import ShotstackService, SlideAsset
+from app.services.shotstack_service import ShotstackService, SlideAsset, trim_video_end
 
 # Configure logging
 logging.basicConfig(
@@ -2499,20 +2499,57 @@ async def _render_final_video_background(job_id: str):
         # Create lookup for audio by slide number
         audio_by_slide = {a["slide_number"]: a for a in audio_manifest}
 
-        # Build SlideAsset list
+        # Trim videos to remove fade-to-black at end (2.5 seconds)
+        # This is done BEFORE sending to Shotstack since Shotstack can't trim from the end
+        TRIM_BEFORE_END = 2.5
+        trimmed_dir = settings.OUTPUTS_DIR / job_id / "videos" / "trimmed"
+        trimmed_dir.mkdir(parents=True, exist_ok=True)
+
+        task["status"] = "trimming"
+        logger.info(f"[Shotstack] Trimming {len(video_manifest)} videos (removing last {TRIM_BEFORE_END}s)...")
+
+        # Build SlideAsset list with trimmed videos
         slides = []
-        for video in video_manifest:
+        for i, video in enumerate(video_manifest):
             slide_num = video["slide_number"]
+            slide_id = video.get("slide_id", f"slide_{slide_num}")
             audio = audio_by_slide.get(slide_num, {})
+            original_url = video["video_url"]
+
+            # Trim video and upload to R2
+            trimmed_path = trimmed_dir / f"{slide_id}_trimmed.mp4"
+            trimmed_local = trim_video_end(original_url, trimmed_path, TRIM_BEFORE_END)
+
+            if trimmed_local and Path(trimmed_local).exists():
+                # Upload trimmed video to R2
+                with open(trimmed_local, "rb") as f:
+                    video_data = f.read()
+
+                upload_result = r2_service.upload_file(
+                    file_data=video_data,
+                    file_name=f"{job_id}_{slide_id}_trimmed.mp4",
+                    content_type="video/mp4"
+                )
+
+                if upload_result.success:
+                    video_url = upload_result.public_url
+                    logger.info(f"[Shotstack] Slide {slide_num}: trimmed and uploaded to R2")
+                else:
+                    logger.warning(f"[Shotstack] Slide {slide_num}: R2 upload failed, using original")
+                    video_url = original_url
+            else:
+                logger.warning(f"[Shotstack] Slide {slide_num}: trim failed, using original")
+                video_url = original_url
 
             slide = SlideAsset(
                 slide_number=slide_num,
-                video_url=video["video_url"],
+                video_url=video_url,
                 audio_url=audio.get("audio_url"),
                 audio_duration=audio.get("audio_duration"),
                 title=video.get("title")
             )
             slides.append(slide)
+            task["completed_slides"] = i + 1
 
         if not slides:
             task["status"] = "failed"
