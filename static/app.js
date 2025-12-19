@@ -421,12 +421,15 @@ async function runAutomatedWorkflow() {
                 finalVideoSection.classList.remove('hidden');
                 finalVideoContent.classList.remove('hidden');
                 finalVideoSpinner.classList.add('hidden');
-                finalVideoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 showToast('Final video ready!', 'success');
                 setWorkflowStatus('Workflow complete! Your video is ready.');
                 // Remove sticky mode when complete
                 workflowSection.classList.remove('sticky');
                 if (workflowSpacer) workflowSpacer.classList.remove('active');
+                // Scroll to final video after layout settles
+                setTimeout(() => {
+                    finalVideoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 100);
                 break;
             }
 
