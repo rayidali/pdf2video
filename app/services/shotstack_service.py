@@ -75,7 +75,7 @@ class ShotstackService:
         self,
         slides: List[SlideAsset],
         min_clip_duration: float = 5.0,
-        trim_end: float = 2.0
+        trim_end: float = 2.5
     ) -> dict:
         """
         Build Shotstack timeline JSON from slide assets.

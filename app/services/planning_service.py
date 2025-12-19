@@ -74,6 +74,26 @@ Conversational, tied to what's happening visually:
 - "Notice how the shape transforms..."
 - "See the difference between..."
 
+## KEY POINTS (Displayed on screen!)
+Key points appear as TEXT ON THE SLIDE - they must be ULTRA SHORT or they get cut off!
+
+KEY POINTS RULES:
+- Maximum 3-4 words per point
+- Include equations/formulas when the slide is about math (e.g., "π*θ = argmax E[R(τ)]")
+- No long explanations - just the core concept
+- 2-3 key points per slide maximum
+
+GOOD key points:
+- "π* = argmax E[R(τ)]"
+- "Balance exploration vs exploitation"
+- "90% accuracy achieved"
+- "O(n²) complexity"
+
+BAD key points (TOO LONG - will be cut off!):
+- "Maximize expected reward over trajectories" (7 words - too long!)
+- "Learn optimal policy through experience" (5 words - still too long!)
+- "The algorithm achieves state of the art results" (way too long!)
+
 ## SLIDE STRUCTURE (11 slides)
 1. Hook - The problem (visual metaphor)
 2. Stakes - Why it matters
@@ -114,7 +134,7 @@ BAD fallback examples:
       "title": "Short Title",
       "visual_type": "diagram",
       "visual_description": "A natural, flowing description of what to visualize. Describe the concept and let the engine figure out the animation.",
-      "key_points": ["Point 1", "Point 2"],
+      "key_points": ["E = mc²", "Max 4 words"],
       "voiceover_script": "3-4 conversational sentences tied to the visual.",
       "duration_seconds": 40,
       "transition_note": "Connection to next slide",
