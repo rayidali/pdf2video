@@ -8,75 +8,88 @@ from app.services.manim_validator import ManimValidator, validator
 
 logger = logging.getLogger(__name__)
 
-# Maximum number of fix attempts for broken code
-MAX_FIX_ATTEMPTS = 3
+# Maximum number of static-validator fix attempts.
+# Render-time retries happen at the orchestration layer (see main.py), so
+# keep this small to avoid burning latency on the LLM round-trip.
+MAX_FIX_ATTEMPTS = 1
 
-SYSTEM_PROMPT = """You are an expert Manim developer who creates beautiful 3Blue1Brown-style mathematical animations.
-
-Your job: Take a visual description for a slide and generate working Manim Community Edition code that creates that animation.
-
-## MANIM STYLE GUIDELINES
-
-Follow 3Blue1Brown's visual style:
-- **Colors**: Use a dark background (default). Primary colors: BLUE, YELLOW, GREEN, RED, WHITE. Use color constants from Manim.
-- **Typography**: Use Tex for math, Text for regular text. Keep text minimal and large.
-- **Animation**: Smooth animations with Write, FadeIn, Transform, MoveToTarget. Use appropriate run_time (1-3 seconds typically).
-- **Layout**: Center important elements. Use arrange(), next_to(), shift() for positioning.
-- **Pacing**: Add self.wait() between animations for breathing room.
-
-## CODE REQUIREMENTS
-
-1. Create a single Scene class that inherits from Scene
-2. Class name should be descriptive (e.g., `class TransformerAttention(Scene):`)
-3. All animation logic goes in the `construct(self)` method
-4. Use Manim Community Edition syntax (not ManimGL or old Manim)
-5. Import statement should be: `from manim import *`
-6. Code must be complete and runnable
-
-## VISUAL TYPES AND APPROACHES
-
-- **diagram**: Use shapes (Rectangle, Circle, Arrow, Line), VGroup for grouping, arrange for layout
-- **equation**: Use MathTex for LaTeX equations, TransformMatchingTex for equation morphing
-- **graph**: Use Axes, plot methods, dots and lines
-- **comparison**: Split screen with VGroup, use side-by-side layout
-- **timeline**: Horizontal arrow with labeled points
-- **text_reveal**: Write animation for text, maybe with highlights
-- **code_walkthrough**: Use Code class or Text with monospace font
+SYSTEM_PROMPT = """You are an expert Manim Community Edition developer. You produce code that renders successfully on the FIRST try on a remote Manim render farm. Reliability beats sophistication.
 
 ## OUTPUT FORMAT
+Output ONLY raw Python code. No markdown fences, no prose, no explanations. The first line must be `from manim import *`.
 
-Output ONLY the Python code, no markdown code blocks or explanations. The code should be directly executable.
+## CODE STRUCTURE (NON-NEGOTIABLE)
+1. Single `from manim import *` import.
+2. Exactly one class inheriting from `Scene`. Use the EXACT class name the user specifies (e.g., `Slide001`).
+3. All animation logic inside `def construct(self):`.
+4. Set background explicitly at the top of construct: `self.camera.background_color = "#000000"`.
+5. End with `self.wait(1.0)` then `self.play(FadeOut(<group_of_everything>), run_time=0.5)`.
 
-Example output format:
+## HARD BANS (these break renders)
+- DO NOT use `MathTex`, `Tex`, or any LaTeX. No exceptions — even for math, render it with `Text("a^2 + b^2 = c^2")`.
+- DO NOT use 3D scenes, `ThreeDScene`, `ThreeDAxes`, camera rotation.
+- DO NOT use `Code`, `ImageMobject`, `SVGMobject`, `MovingCamera`, or any external asset.
+- DO NOT use `numpy.random`, `random`, physics simulation, collision detection, or `always_redraw` with stateful closures.
+- DO NOT define helper classes other than the one Scene class.
+- DO NOT use f-strings inside `Text(...)` — pre-build the string in a variable.
+
+## ALLOWED PRIMITIVES (use these)
+- Mobjects: `Text`, `Circle`, `Rectangle`, `Square`, `Line`, `Arrow`, `DoubleArrow`, `Dot`, `VGroup`, `Axes`, `NumberLine`.
+- Animations: `FadeIn`, `FadeOut`, `Write`, `Create`, `Transform`, `ReplacementTransform`, `GrowArrow`, `GrowFromCenter`, `Indicate`.
+- Layout: `.to_edge(UP/DOWN/LEFT/RIGHT, buff=...)`, `.next_to(other, DOWN, buff=...)`, `.move_to(...)`, `.shift(...)`, `VGroup(...).arrange(DOWN, buff=...)`, `.scale(...)`.
+
+## SAFETY RULES
+- Stay inside the visible frame: x in [-6.5, 6.5], y in [-3.5, 3.5]. Use `.to_edge` and `.arrange` rather than absolute coordinates when possible.
+- Cap total mobjects at 12.
+- Cap text content at 80 chars per Text mobject.
+- Use hex color strings ("#58C4DD") OR Manim color constants (BLUE, YELLOW, GREEN, RED, WHITE, GRAY) — NEVER bare strings like "blue".
+- Use `font_size=` (not `size=`) for Text. Default 36–48 for body, 56 for titles.
+- Total animation 6–10 seconds.
+- Never reference a variable before assigning it.
+- Every mobject you animate must have been added with `self.add` or via a `self.play(Create/Write/FadeIn(...))` first.
+
+## STYLE
+- Black background, primary color #58C4DD (cyan), white body text.
+- Title at top via `.to_edge(UP, buff=0.7)`. Body content centered or grouped via `VGroup(...).arrange(DOWN)`.
+- Smooth `run_time` 0.4–0.8s per animation, with `self.wait(0.3)` between for pacing.
+
+## EXAMPLE (mirror this structure exactly)
 from manim import *
 
-class SlideTitle(Scene):
+class ExampleSlide(Scene):
     def construct(self):
-        # Your animation code here
-        title = Text("Example")
-        self.play(Write(title))
-        self.wait()
+        self.camera.background_color = "#000000"
+        title = Text("Concept Name", color="#58C4DD", font_size=54, weight=BOLD).to_edge(UP, buff=0.7)
+        body = VGroup(
+            Text("First key idea", color=WHITE, font_size=36),
+            Text("Second key idea", color=WHITE, font_size=36),
+            Text("Third key idea", color=WHITE, font_size=36),
+        ).arrange(DOWN, aligned_edge=LEFT, buff=0.5).next_to(title, DOWN, buff=1.0)
+
+        self.play(FadeIn(title, shift=DOWN*0.2), run_time=0.5)
+        for line in body:
+            self.play(FadeIn(line, shift=RIGHT*0.2), run_time=0.5)
+            self.wait(0.3)
+        self.wait(2.0)
+        self.play(FadeOut(VGroup(title, body)), run_time=0.5)
 """
 
-FIX_SYSTEM_PROMPT = """You are an expert Manim debugger. Your job is to fix broken Manim code.
+FIX_SYSTEM_PROMPT = """You are an expert Manim Community Edition debugger. Fix broken Manim code so it renders successfully on a remote render farm.
 
-You will receive:
-1. The original Manim code that has errors
-2. A list of specific errors found in the code
+You will receive the original code and either a list of static errors or a runtime/render error from Manim itself.
 
-Your task:
-1. Analyze each error carefully
-2. Fix ALL the errors while preserving the original animation intent
-3. Return ONLY the corrected Python code, no explanations
+Rules:
+1. Return ONLY the corrected Python code. No markdown fences, no prose.
+2. The first line must be `from manim import *`.
+3. Preserve the EXACT class name from the original code.
+4. If the error mentions LaTeX/MathTex/Tex, REPLACE all `MathTex(...)` and `Tex(...)` calls with plain `Text(...)`. LaTeX is unavailable on the renderer.
+5. Strip any `Code`, `ImageMobject`, `SVGMobject`, `ThreeDScene`, `numpy.random`, `random` usages — replace with `Text`/`Rectangle`/`VGroup` equivalents.
+6. Keep all elements within x in [-6.5, 6.5] and y in [-3.5, 3.5].
+7. Ensure every animated mobject was added via `self.play(Create/FadeIn/Write(...))` or `self.add(...)` before being transformed.
+8. End the construct method with `self.wait(1.0)` followed by `self.play(FadeOut(...))`.
+9. Do not introduce helper classes. Single Scene only.
 
-Common fixes:
-- Syntax errors: Fix typos, missing colons, incorrect indentation
-- Import errors: Ensure 'from manim import *' is present
-- Name errors: Use correct Manim class/function names (e.g., MathTex not MathTeX)
-- Type errors: Ensure correct argument types for Manim functions
-- Missing construct: Ensure the Scene class has a construct(self) method
-
-Output ONLY the fixed Python code, nothing else."""
+Output ONLY the corrected Python code."""
 
 
 class ManimService:
@@ -85,7 +98,7 @@ class ManimService:
             logger.warning("ANTHROPIC_API_KEY not set - manim generation will fail")
         self.api_key = api_key
         self.client = Anthropic(api_key=api_key) if api_key else None
-        self.model = "claude-sonnet-4-5-20250929"
+        self.model = "claude-opus-4-7"
         self.validator = validator
         self.skip_validation = skip_validation
 
