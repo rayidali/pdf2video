@@ -16,6 +16,7 @@ from app.services.planning_service import PlanningService
 from app.services.manim_service import ManimService
 from app.services.render_service import GenerativeManimService
 from app.services.kodisc_service import KodiscService
+from app.services.safe_slide_template import render_safe_slide_code
 from app.services.elevenlabs_service import ElevenLabsService
 from app.services.r2_service import R2Service
 from app.services.shotstack_service import ShotstackService, SlideAsset, trim_video_end
@@ -1780,6 +1781,10 @@ async def _generate_kodisc_videos_background(job_id: str):
 
         video_manifest = []
 
+        # Paper context for the LLM (used by manim_service.generate_slide_code)
+        paper_title = plan_data.get("paper_title", "")
+        paper_summary = plan_data.get("paper_summary", "")
+
         for i, slide in enumerate(slides):
             # Check for cancellation
             if task.get("cancel_flag"):
@@ -1793,138 +1798,163 @@ async def _generate_kodisc_videos_background(job_id: str):
                 await asyncio.sleep(SLIDE_DELAY_SECONDS)
 
             slide_number = slide["slide_number"]
-            visual_desc = slide.get("visual_description", "")
             title = slide.get("title", f"Slide {slide_number}")
-            key_points = slide.get("key_points", [])
-
-            # Pre-generated fallback text (clean, consistent)
-            fallback_title = slide.get("fallback_title", title[:25])
-            fallback_points = slide.get("fallback_points", [])
+            key_points = slide.get("key_points", []) or []
+            fallback_title = slide.get("fallback_title") or title[:60]
+            fallback_points = slide.get("fallback_points") or key_points[:3]
 
             task["current_slide"] = slide_number
             task["current_title"] = title
 
-            # ============================================
-            # PROMPT STRATEGY (mimics Kodisc website)
-            # ============================================
-            # 1. Use SYSTEM+USER format (like the website's chat API)
-            # 2. Sanitize: Replace risky words that crash Kodisc
-            # 3. Always send colors (website always does)
-            # ============================================
-
-            # Sanitize the visual description (remove crashy words)
-            safe_visual_desc = sanitize_prompt(visual_desc) if visual_desc else ""
-
-            # Primary prompt - SYSTEM+USER format like website
-            primary_prompt = SYSTEM_PROMPT + (
-                safe_visual_desc if safe_visual_desc
-                else f"Create a simple diagram explaining {title}"
-            )
-
-            # Fallback - TEXT-ONLY PPT-style slide using PRE-GENERATED clean text
-            # Use fallback_title and fallback_points from planning (if available)
-            # Otherwise fall back to key_points
-            if fallback_points and len(fallback_points) >= 3:
-                fb_points = fallback_points[:3]
-            else:
-                fb_points = key_points[:3] if key_points else ["Key concept", "Main idea", "Summary"]
-
-            # TRULY MINIMAL fallback - NO SYSTEM_PROMPT, ~200 chars max
-            # Uses pre-generated clean text from planning phase
-            fallback_prompt = (
-                f"Black background. White text. "
-                f"Title: '{fallback_title[:25]}'. "
-                f"3 lines below: "
-                f"1. {fb_points[0][:30] if len(fb_points) > 0 else 'Point 1'} "
-                f"2. {fb_points[1][:30] if len(fb_points) > 1 else 'Point 2'} "
-                f"3. {fb_points[2][:30] if len(fb_points) > 2 else 'Point 3'} "
-                f"FadeIn once."
-            )
-
-            logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} for job {job_id}...")
-            logger.info(f"[Kodisc] Original: {visual_desc[:80] if visual_desc else 'None'}...")
-            logger.info(f"[Kodisc] Sanitized USER section: {safe_visual_desc[:80] if safe_visual_desc else 'None'}...")
-
-            # Delay between attempts (seconds)
-            ATTEMPT_DELAY = 3.0
-
-            # === ATTEMPT 1: Primary prompt with colors ===
-            result = await kodisc_service.generate_video(
-                prompt=primary_prompt,
-                aspect_ratio="16:9",
-                voiceover=False,
-                colors=KODISC_COLORS  # Always send colors like website does
-            )
-            attempt = 1
-            used_prompt = "primary"
-
-            # === ATTEMPT 2: Retry same prompt (transient failures) ===
-            if not result.success:
-                logger.warning(f"[Kodisc] Attempt 1 failed, waiting {ATTEMPT_DELAY}s before retry...")
-                await asyncio.sleep(ATTEMPT_DELAY)
-                result = await kodisc_service.generate_video(
-                    prompt=primary_prompt,
-                    aspect_ratio="16:9",
-                    voiceover=False,
-                    colors=KODISC_COLORS
-                )
-                attempt = 2
-
-            # === ATTEMPT 3: Text-only PPT fallback (almost never fails) ===
-            if not result.success:
-                logger.warning(f"[Kodisc] Attempt 2 failed, waiting {ATTEMPT_DELAY}s before text-only fallback...")
-                await asyncio.sleep(ATTEMPT_DELAY)
-                result = await kodisc_service.generate_video(
-                    prompt=fallback_prompt,
-                    aspect_ratio="16:9",
-                    voiceover=False,
-                    colors=KODISC_COLORS
-                )
-                attempt = 3
-                used_prompt = "fallback"
-
             slide_id = f"s{slide_number:03d}"
+            class_name = f"Slide{slide_number:03d}"
+            duration = float(slide.get("duration_seconds", 8))
 
-            if result.success:
-                # Save the generated code for reference
-                if result.code:
-                    code_path = videos_dir / f"{slide_id}_kodisc.py"
-                    code_path.write_text(result.code)
+            logger.info(f"[Kodisc] Generating slide {slide_number}/{len(slides)} ({class_name}) for job {job_id}")
 
-                # Track if we used a fallback
-                status = "success" if used_prompt == "primary" else f"success_via_{used_prompt}"
-                logger.info(f"[Kodisc] Slide {slide_number} succeeded via {used_prompt} prompt (attempt {attempt})")
+            # Build the SlideContent for the LLM
+            try:
+                slide_content = SlideContent(**slide)
+            except Exception as e:
+                logger.warning(f"[Kodisc] Slide {slide_number} schema parse failed ({e}); using minimal SlideContent")
+                slide_content = None
 
+            result = None
+            tier_used = None
+            code = None
+
+            # =========================================================
+            # TIER 1: Opus-generated Manim → Kodisc render
+            # =========================================================
+            if slide_content is not None:
+                try:
+                    manim_slide = await manim_service.generate_slide_code(
+                        slide_content, paper_title, paper_summary
+                    )
+                    code = manim_slide.manim_code
+                    (videos_dir / f"{slide_id}_tier1.py").write_text(code)
+                    result = await kodisc_service.render(
+                        code=code,
+                        class_name=class_name,
+                        quality="medium",
+                        aspect_ratio="16:9",
+                    )
+                    tier_used = "opus_primary"
+                    if result.success:
+                        logger.info(f"[Kodisc] Slide {slide_number} succeeded via Tier 1 (Opus primary)")
+                except Exception as e:
+                    logger.error(f"[Kodisc] Tier 1 exception for slide {slide_number}: {e}")
+                    result = None
+
+            # If auth/credits failed, no point trying further tiers — they all
+            # hit the same Kodisc account and will fail identically.
+            if result is not None and (result.is_auth_error or result.is_credits_error):
+                logger.error(f"[Kodisc] Slide {slide_number} hit fatal account error: {result.error}")
+                task["results"].append({
+                    "slide_number": slide_number,
+                    "slide_id": slide_id,
+                    "title": title,
+                    "status": "failed",
+                    "error": result.error,
+                    "tier": tier_used,
+                })
+                task["failed"] += 1
+                task["completed_slides"] = i + 1
+                task["status"] = "auth_error" if result.is_auth_error else "credits_error"
+                task["error"] = result.error
+                logger.error(f"[Kodisc] Aborting batch for job {job_id}: {task['status']}")
+                break
+
+            # =========================================================
+            # TIER 2: Show Opus the render error and ask it to fix
+            # =========================================================
+            if (result is None or not result.success) and code:
+                try:
+                    logger.warning(
+                        f"[Kodisc] Tier 1 failed for slide {slide_number}: "
+                        f"{result.error if result else 'no result'}; trying Tier 2 fix"
+                    )
+                    fixed_code = manim_service._request_fix(
+                        code,
+                        [f"Manim render-time error reported by Kodisc: {result.error if result else 'unknown'}"],
+                        class_name,
+                    )
+                    (videos_dir / f"{slide_id}_tier2.py").write_text(fixed_code)
+                    result = await kodisc_service.render(
+                        code=fixed_code,
+                        class_name=class_name,
+                        quality="medium",
+                        aspect_ratio="16:9",
+                    )
+                    if result.success:
+                        code = fixed_code
+                        tier_used = "opus_retry"
+                        logger.info(f"[Kodisc] Slide {slide_number} succeeded via Tier 2 (Opus retry)")
+                except Exception as e:
+                    logger.error(f"[Kodisc] Tier 2 exception for slide {slide_number}: {e}")
+
+            # =========================================================
+            # TIER 3: Deterministic safe template (no LLM)
+            # =========================================================
+            if result is None or not result.success:
+                logger.warning(f"[Kodisc] Slide {slide_number} falling back to safe template (Tier 3)")
+                safe_code = render_safe_slide_code(
+                    title=fallback_title or title,
+                    bullets=fallback_points or key_points or ["Key concept", "Main idea", "Summary"],
+                    class_name=class_name,
+                    colors=KODISC_COLORS,
+                    duration_seconds=duration,
+                )
+                (videos_dir / f"{slide_id}_tier3.py").write_text(safe_code)
+                result = await kodisc_service.render(
+                    code=safe_code,
+                    class_name=class_name,
+                    quality="medium",
+                    aspect_ratio="16:9",
+                )
+                if result.success:
+                    code = safe_code
+                    tier_used = "safe_template"
+                    logger.info(f"[Kodisc] Slide {slide_number} succeeded via Tier 3 (safe template)")
+
+            # =========================================================
+            # Record result
+            # =========================================================
+            if result is not None and result.success:
+                if code:
+                    (videos_dir / f"{slide_id}_kodisc.py").write_text(code)
                 slide_result = {
                     "slide_number": slide_number,
                     "slide_id": slide_id,
                     "title": title,
                     "status": "success",
                     "video_url": result.video_url,
-                    "attempts": attempt,
-                    "prompt_used": used_prompt
+                    "thumbnail_url": result.thumbnail_url,
+                    "captions_url": result.captions_url,
+                    "tier": tier_used,
+                    "kodisc_job_id": result.job_id,
                 }
                 task["successful"] += 1
-
                 video_manifest.append({
                     "slide_id": slide_id,
                     "slide_number": slide_number,
                     "title": title,
                     "video_url": result.video_url,
-                    "code_path": str(videos_dir / f"{slide_id}_kodisc.py") if result.code else None,
+                    "thumbnail_url": result.thumbnail_url,
+                    "code_path": str(videos_dir / f"{slide_id}_kodisc.py"),
                     "source": "kodisc",
-                    "prompt_used": used_prompt
+                    "tier": tier_used,
                 })
             else:
-                # All 3 attempts failed (primary, retry, text-only fallback)
-                logger.error(f"[Kodisc] Slide {slide_number} failed after all 3 attempts")
+                err_msg = result.error if result else "All tiers failed"
+                logger.error(f"[Kodisc] Slide {slide_number} failed after all tiers: {err_msg}")
                 slide_result = {
                     "slide_number": slide_number,
                     "slide_id": slide_id,
                     "title": title,
                     "status": "failed",
-                    "error": result.error,
-                    "attempts": 3
+                    "error": err_msg,
+                    "tier": tier_used,
                 }
                 task["failed"] += 1
 
