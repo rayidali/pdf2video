@@ -8,3 +8,4 @@ pydantic-settings>=2.3
 boto3>=1.34
 psycopg[binary]>=3.2
 mutagen>=1.47
+pypdf>=5

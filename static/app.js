@@ -457,7 +457,8 @@ async function init() {
     state.config = await api('/api/config');
     if (state.config.passcode_required) show($('passcode-row'));
     renderGallery(state.config.samples);
-    const missing = Object.entries(state.config.services || {}).filter(([k, v]) => v === false).map(([k]) => k);
+    const optional = new Set(['mistral_ocr_fallback']);
+    const missing = Object.entries(state.config.services || {}).filter(([k, v]) => v === false && !optional.has(k)).map(([k]) => k);
     if (missing.length) toast(`Not configured yet: ${missing.join(', ')}`, 'error');
   } catch (e) {
     toast(`Cannot reach the API: ${e.message}`, 'error');

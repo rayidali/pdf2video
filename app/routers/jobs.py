@@ -8,6 +8,8 @@ import json
 import logging
 import re
 import uuid
+
+import httpx
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +19,7 @@ from app import deps
 from app.config import settings
 from app.models.schemas import Job, SlideContent, SlideState
 from app.services.manim_validator import validate_code
+from app.services.pdf_text import extract_text
 from app.services.safe_slide_template import render_safe_slide_code
 from app.services.shotstack_service import SlideAsset
 
@@ -99,13 +102,46 @@ async def _code_for_slide(job: Job, state: SlideState, content: SlideContent, cl
     return _safe_code(content, class_name), "safe_template"
 
 
-def _parse_samples() -> list[dict]:
+async def _fetch_bytes(url: str, timeout: float = 120.0) -> bytes:
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.content
+
+
+async def _with_fresh_urls(job: Job) -> dict:
+    """Public document with presigned R2 URLs minted now (stored ones may have expired)."""
+    doc = job.public()
+    for key, a in job.audio.items():
+        if a.r2_key:
+            url = await deps.r2.presign_async(a.r2_key)
+            if url:
+                doc["audio"][key]["audio_url"] = url
+    if job.final.r2_key:
+        url = await deps.r2.presign_async(job.final.r2_key)
+        if url:
+            doc["final"]["video_url"] = url
+    if not doc["final"].get("video_url"):
+        doc["final"]["video_url"] = job.final.shotstack_url
+    doc["summary"]["final_url"] = doc["final"]["video_url"]
+    return doc
+
+
+async def _parse_samples() -> list[dict]:
+    """SAMPLE_VIDEOS entries carry either a public `url` or an R2 `key` (presigned on the fly)."""
     try:
         samples = json.loads(settings.SAMPLE_VIDEOS or "[]")
-        return [s for s in samples if isinstance(s, dict) and s.get("url")]
     except json.JSONDecodeError:
         logger.warning("SAMPLE_VIDEOS is not valid JSON")
         return []
+    out = []
+    for s in samples:
+        if not isinstance(s, dict):
+            continue
+        url = s.get("url") or (await deps.r2.presign_async(s["key"]) if s.get("key") else None)
+        if url:
+            out.append({"title": s.get("title", "Sample"), "url": url, "poster": s.get("poster")})
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +152,7 @@ def _parse_samples() -> list[dict]:
 async def get_config():
     return {
         "passcode_required": bool(settings.RUN_PASSCODE),
-        "samples": _parse_samples(),
+        "samples": await _parse_samples(),
         "services": deps.service_status(),
         "max_upload_mb": settings.MAX_UPLOAD_MB,
     }
@@ -130,7 +166,7 @@ async def list_jobs():
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str):
     job = await load_job(job_id)
-    return job.public()
+    return await _with_fresh_urls(job)
 
 
 @router.get("/jobs/{job_id}/markdown")
@@ -169,19 +205,31 @@ async def create_job(file: UploadFile = File(...)):
     job = Job(id=uuid.uuid4().hex[:8], filename=safe_name)
     logger.info(f"[{job.id}] upload {safe_name} ({len(data)} bytes)")
 
-    try:
-        markdown = await deps.ocr.pdf_to_markdown(data, safe_name)
-    except Exception as e:
-        job.step, job.error = "failed", f"OCR failed: {e}"
-        await deps.store.create(job)
-        raise HTTPException(status_code=502, detail=job.error)
+    # 1) Free local extraction. 2) Mistral OCR only if the PDF looks scanned and a key exists.
+    local = extract_text(data)
+    markdown, source = local.text, "pypdf"
+    if not local.looks_complete:
+        if deps.ocr.is_configured():
+            try:
+                markdown, source = await deps.ocr.pdf_to_markdown(data, safe_name), "mistral_ocr"
+            except Exception as e:
+                logger.warning(f"[{job.id}] Mistral OCR failed ({e}); using local text if any")
+                if not markdown.strip():
+                    job.step, job.error = "failed", f"OCR failed: {e}"
+                    await deps.store.create(job)
+                    raise HTTPException(status_code=502, detail=job.error)
+        elif not markdown.strip():
+            job.step, job.error = "failed", "This PDF has no extractable text (scanned?) and no OCR key is configured"
+            await deps.store.create(job)
+            raise HTTPException(status_code=422, detail=job.error)
 
     if not markdown.strip():
-        job.step, job.error = "failed", "OCR returned no text"
+        job.step, job.error = "failed", "No text could be extracted from the PDF"
         await deps.store.create(job)
         raise HTTPException(status_code=422, detail=job.error)
 
-    job.markdown, job.step = markdown, "ocr_complete"
+    job.markdown, job.text_source, job.step = markdown, source, "ocr_complete"
+    logger.info(f"[{job.id}] text via {source}: {len(markdown)} chars")
     await deps.store.create(job)
     return {"job": job.public(), "markdown_preview": markdown[:600]}
 
@@ -302,7 +350,7 @@ async def voice_slide(job_id: str, n: int, force: bool = False):
         return {"audio": audio.model_dump(), "cached": False}
 
     audio.status, audio.error = "done", None
-    audio.audio_url, audio.duration_seconds = upload.public_url, tts.duration_seconds
+    audio.r2_key, audio.audio_url, audio.duration_seconds = upload.key, upload.public_url, tts.duration_seconds
     job.step = "voicing"
     await deps.store.save(job)
     return {"audio": audio.model_dump(), "cached": False}
@@ -327,11 +375,14 @@ async def assemble(job_id: str, force: bool = False):
         if s.status != "done" or not s.video_url:
             continue
         a = job.audio.get(key)
-        has_audio = bool(a and a.status == "done" and a.audio_url and a.duration_seconds)
+        has_audio = bool(a and a.status == "done" and (a.r2_key or a.audio_url) and a.duration_seconds)
+        audio_url = None
+        if has_audio:
+            audio_url = (await deps.r2.presign_async(a.r2_key) if a.r2_key else None) or a.audio_url
         assets.append(SlideAsset(
             slide_number=s.slide_number,
             video_url=s.video_url,
-            audio_url=a.audio_url if has_audio else None,
+            audio_url=audio_url,
             audio_duration=a.duration_seconds if has_audio else None,
             fallback_duration=NO_AUDIO_HOLD_SECONDS,
             title=s.title,
@@ -358,11 +409,23 @@ async def poll_assemble(job_id: str):
     if final.status in ("submitted", "rendering") and final.render_id:
         result = await deps.shotstack.check_render_status(final.render_id)
         if result.status == "done":
-            final.status, final.video_url, final.error = "done", result.video_url, None
+            final.status, final.shotstack_url, final.video_url, final.error = "done", result.video_url, result.video_url, None
             job.step = "complete"
+            # Shotstack deletes renders after ~24 h; keep a durable copy in R2.
+            try:
+                data = await _fetch_bytes(result.video_url, timeout=180.0)
+                up = await deps.r2.upload_async(data, f"{job.id}_final.mp4", "video/mp4")
+                if up.success:
+                    final.r2_key, final.video_url = up.key, up.public_url
+                    logger.info(f"[{job.id}] final video copied to R2 ({len(data)} bytes)")
+                else:
+                    logger.warning(f"[{job.id}] R2 copy of final video failed: {up.error}")
+            except Exception as e:
+                logger.warning(f"[{job.id}] could not copy final video to R2: {e}")
         elif result.status == "failed" or not result.success:
             final.status, final.error = "failed", result.error
         else:
             final.status = "rendering"
         await deps.store.save(job)
-    return {"final": final.model_dump(), "step": job.step}
+    doc = await _with_fresh_urls(job)
+    return {"final": doc["final"], "step": job.step}

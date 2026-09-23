@@ -1,5 +1,5 @@
 from app.config import settings
-from tests.conftest import FakeManim, upload
+from tests.conftest import FakeManim, make_text_pdf, upload
 
 
 def test_full_pipeline(client, fakes):
@@ -39,9 +39,14 @@ def test_full_pipeline(client, fakes):
 
     edit = fakes.shotstack.edits[0]
     assert [a.audio_duration for a in edit] == [12.5, 12.5]
+    assert all("sig=fresh" in a.audio_url for a in edit)   # minted at assemble time, not stale
 
+    # final video was copied from Shotstack into R2 and is served via a fresh presigned URL
+    assert fakes.r2.uploads[f"{job_id}_final.mp4"].startswith(b"FAKE-MP4-https://cdn.example/final.mp4")
     doc = client.get(f"/api/jobs/{job_id}").json()
-    assert doc["summary"]["slides_rendered"] == 2 and doc["final"]["video_url"].endswith("final.mp4")
+    assert doc["summary"]["slides_rendered"] == 2
+    assert doc["final"]["r2_key"] == f"{job_id}_final.mp4" and "sig=fresh" in doc["final"]["video_url"]
+    assert doc["final"]["shotstack_url"].endswith("final.mp4")
     assert client.get("/api/jobs").json()["jobs"][0]["id"] == job_id
 
 
@@ -99,3 +104,25 @@ def test_upload_validation(client):
     assert client.get("/api/jobs/zzzzzzzz").status_code == 404
     assert client.get("/api/jobs/../etc").status_code == 404
     assert client.get("/health").json()["status"] == "healthy"
+
+
+def test_local_text_extraction_skips_ocr(client, fakes, monkeypatch):
+    calls = []
+    async def never(data, name):
+        calls.append(name); return "should not be used"
+    monkeypatch.setattr(fakes.ocr, "pdf_to_markdown", never)
+    pdf = make_text_pdf("Attention is all you need. " * 4, copies=40)
+    r = upload(client, data=pdf)
+    assert r.status_code == 200, r.text
+    assert r.json()["job"]["text_source"] == "pypdf" and calls == []
+    assert "Attention" in client.get(f"/api/jobs/{r.json()['job']['id']}/markdown").json()["markdown"]
+
+
+def test_scanned_pdf_falls_back_to_ocr(client, fakes):
+    r = upload(client)  # fake bytes: pypdf cannot read them
+    assert r.status_code == 200 and r.json()["job"]["text_source"] == "mistral_ocr"
+
+
+def test_scanned_pdf_without_ocr_key_is_rejected(client, fakes, monkeypatch):
+    monkeypatch.setattr(fakes.ocr, "is_configured", lambda: False)
+    assert upload(client).status_code == 422

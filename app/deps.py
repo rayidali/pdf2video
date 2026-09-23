@@ -32,7 +32,8 @@ store = build_store(settings.database_url, settings.sqlite_path)
 
 def service_status() -> dict:
     return {
-        "ocr": ocr.is_configured(),
+        "text_extraction": "pypdf",
+        "mistral_ocr_fallback": ocr.is_configured(),
         "anthropic": planner.is_configured(),
         "kodisc": kodisc.is_configured(),
         "elevenlabs": tts.is_configured(),

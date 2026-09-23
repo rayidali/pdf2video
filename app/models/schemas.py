@@ -77,7 +77,8 @@ class SlideState(BaseModel):
 class AudioState(BaseModel):
     slide_number: int
     status: str = "pending"    # pending | done | failed | skipped
-    audio_url: Optional[str] = None
+    r2_key: Optional[str] = None
+    audio_url: Optional[str] = None   # presigned; refreshed on read
     duration_seconds: Optional[float] = None
     error: Optional[str] = None
 
@@ -85,7 +86,9 @@ class AudioState(BaseModel):
 class FinalState(BaseModel):
     status: str = "pending"    # pending | submitted | rendering | done | failed
     render_id: Optional[str] = None
-    video_url: Optional[str] = None
+    shotstack_url: Optional[str] = None   # expires ~24 h after the render
+    r2_key: Optional[str] = None          # durable copy in R2
+    video_url: Optional[str] = None       # presigned R2 URL, refreshed on read; falls back to shotstack_url
     error: Optional[str] = None
 
 
@@ -98,6 +101,7 @@ class Job(BaseModel):
     error: Optional[str] = None
     fatal: bool = False        # True when a vendor rejected the key or credits ran out; client must stop
     markdown: Optional[str] = None
+    text_source: Optional[str] = None   # pypdf | mistral_ocr
     plan: Optional[PresentationPlan] = None
     slides: dict[str, SlideState] = Field(default_factory=dict)
     audio: dict[str, AudioState] = Field(default_factory=dict)

@@ -56,7 +56,7 @@ Tiers per slide: 1 = Opus from the visual description, 2 = Opus given the Kodisc
 - [ ] 7c. API keys via `vercel env add` + redeploy (see HANDOFF)
 - [ ] 8. End-to-end run with real keys; fix what breaks
 - [ ] 9. README rewrite, merge to `main`, put the URL on the resume
-- [ ] later: Kodisc/Shotstack webhooks instead of polling; render 2 slides concurrently; prompt caching
+- [ ] later: Kodisc/Shotstack webhooks instead of polling; render 2 slides concurrently; prompt caching; MinerU hosted API as the scanned-PDF fallback (free quota; async submit/poll) instead of Mistral OCR
 
 ## Free-tier ledger (checked 2026-09-23)
 | Service | Free allowance | Notes |

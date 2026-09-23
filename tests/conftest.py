@@ -13,7 +13,24 @@ from app.services.r2_service import UploadResult
 from app.services.shotstack_service import ShotstackResult
 from app.store import SqliteJobStore
 
-PDF_BYTES = b"%PDF-1.4\n% fake pdf for tests\n"
+PDF_BYTES = b"%PDF-1.4\n% fake pdf for tests\n"   # unreadable by pypdf -> exercises the OCR fallback
+
+
+def make_text_pdf(text: str, copies: int = 1) -> bytes:
+    """A minimal valid single-page PDF whose page contains `text` repeated `copies` times."""
+    from pypdf import PdfWriter
+    from pypdf.generic import DictionaryObject, NameObject, StreamObject
+
+    w = PdfWriter()
+    page = w.add_blank_page(width=612, height=792)
+    lines = "\n".join(f"BT /F1 12 Tf 40 {760 - 14 * i} Td ({text}) Tj ET" for i in range(copies))
+    stream = StreamObject(); stream._data = lines.encode()
+    font = DictionaryObject({NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"), NameObject("/BaseFont"): NameObject("/Helvetica")})
+    page[NameObject("/Resources")] = DictionaryObject({NameObject("/Font"): DictionaryObject({NameObject("/F1"): w._add_object(font)})})
+    page[NameObject("/Contents")] = w._add_object(stream)
+    import io
+    buf = io.BytesIO(); w.write(buf)
+    return buf.getvalue()
 
 VALID_CODE = '''from manim import *
 
@@ -134,11 +151,21 @@ class FakeTTS:
 
 
 class FakeR2:
+    def __init__(self):
+        self.uploads = {}
+
     def is_configured(self):
         return True
 
+    def presign(self, key, expires=0):
+        return f"https://r2.example/{key}?sig=fresh"
+
+    async def presign_async(self, key):
+        return self.presign(key)
+
     async def upload_async(self, data, name, content_type="audio/mpeg") -> UploadResult:
-        return UploadResult(success=True, public_url=f"https://r2.example/{name}", file_name=name)
+        self.uploads[name] = data
+        return UploadResult(success=True, key=name, public_url=f"https://r2.example/{name}?sig=upload")
 
 
 class FakeShotstack:
@@ -174,9 +201,13 @@ def fakes(monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def client(fakes):
+def client(fakes, monkeypatch):
     from app.main import app
 
+    async def fake_fetch(url, timeout=0):
+        return b"FAKE-MP4-" + url.encode()
+
+    monkeypatch.setattr("app.routers.jobs._fetch_bytes", fake_fetch)
     return TestClient(app)
 
 
