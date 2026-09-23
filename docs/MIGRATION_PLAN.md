@@ -53,9 +53,10 @@ Tiers per slide: 1 = Opus from the visual description, 2 = Opus given the Kodisc
 - [x] 6. Tests (pytest, mocked vendors) + GitHub Actions
 - [x] 7a. `vercel.json` (services block), project linked, preview + production deploys green
 - [x] 7b. Deployment Protection → Standard; Neon Postgres provisioned and verified on Vercel
-- [ ] 7c. API keys via `vercel env add` + redeploy (see HANDOFF)
-- [ ] 8. End-to-end run with real keys; fix what breaks
-- [ ] 9. README rewrite, merge to `main`, put the URL on the resume
+- [x] 7c. API keys via `vercel env add` + redeploy
+- [x] 8. End-to-end run with real keys (job `10ebc935`, 17 min, 11/11 slides); fixed Mistral→pypdf and R2→presigned along the way
+- [x] 9a. README rewritten, gallery live
+- [ ] 9b. Merge PR #45 to `main`; put https://pdf2video-wine.vercel.app on the resume
 - [ ] later: Kodisc/Shotstack webhooks instead of polling; render 2 slides concurrently; prompt caching; MinerU hosted API as the scanned-PDF fallback (free quota; async submit/poll) instead of Mistral OCR
 
 ## Free-tier ledger (checked 2026-09-23)
@@ -64,8 +65,8 @@ Tiers per slide: 1 = Opus from the visual description, 2 = Opus given the Kodisc
 | Vercel Hobby | free, non-commercial | 300 s max per function, 100 GB bandwidth |
 | Postgres (Marketplace) | free tier | Neon or similar; one small table |
 | Cloudflare R2 | 10 GB storage, 10 M reads/mo | already integrated |
-| Kodisc | 1,000 credits/mo, no card | billed per render-second; see HANDOFF for measured cost |
-| ElevenLabs | 10k chars/mo on free plan | ~4–5k chars per paper → ~2 runs/mo free |
+| Kodisc | 1,000 credits/mo, no card | measured: ~51 credits per 720p render, 562 per paper |
+| ElevenLabs | owner is on Creator (300k chars/mo) | measured: 1,555 chars per paper |
 | Shotstack | 20 min video/mo free; sandbox unlimited but watermarked | production env (`v1`) needed for no watermark |
-| Mistral OCR | pay per page, cents per paper | free experiment tier exists with rate limits |
+| Mistral OCR | not used | pypdf extracts text locally; OCR only for scanned PDFs |
 | Anthropic | paid | ~$1 per paper on Opus 5, ~$0.45 on Sonnet 5 |
