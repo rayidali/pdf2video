@@ -5,7 +5,7 @@ _Last updated: 2026-09-23 (end of session 1)._ Update this file whenever a step 
 ## Where things stand
 | Item | State |
 |---|---|
-| Code | branch `vercel-migration`, PR #45 → `main` (https://github.com/rayidali/pdf2video/pull/45). Not merged yet. |
+| Code | **Merged to `main`** (PR #45, 2026-09-23). Pushes to `main` auto-deploy production. Branch `vercel-migration` can be deleted. |
 | Vercel project | `rayidalis-projects/pdf2video`, linked to the GitHub repo. Framework preset: Services (FastAPI). |
 | Production URL | **https://pdf2video-wine.vercel.app** (also `pdf2video-rayidalis-projects.vercel.app`). `pdf2video.vercel.app` was taken. |
 | Production state | **Public and healthy.** Deployment Protection is Standard (previews private, production open). |
@@ -15,8 +15,7 @@ _Last updated: 2026-09-23 (end of session 1)._ Update this file whenever a step 
 | **End-to-end** | **Verified on production 2026-09-23**: job `10ebc935`, *Attention Is All You Need*, 11/11 slides rendered on tier 1, 11/11 narrated, final 3:56 mp4 in R2. 17 minutes wall clock. The landing-page gallery shows it (`SAMPLE_VIDEOS` points at the R2 key). |
 
 ## Go-live checklist
-All done on 2026-09-23: production public (Standard Protection), Neon Postgres (`free_v3`), API keys, passcode, first real run, gallery. What remains:
-- **Merge PR #45** so `main` matches production (pushes to `main` auto-deploy).
+All done on 2026-09-23: production public (Standard Protection), Neon Postgres (`free_v3`), API keys, passcode, first real run, gallery, PR #45 merged. What remains:
 - Put https://pdf2video-wine.vercel.app on the resume. Share the passcode only with people who should be able to spend credits; everyone else can watch the gallery.
 - Optional: a custom domain (you own rayidali.com) via Settings → Domains.
 
@@ -44,10 +43,12 @@ All done on 2026-09-23: production public (Standard Protection), Neon Postgres (
 | Kodisc | 562 credits (~51 per render) | 1,000 free/mo + 20,000 paid on the account | ~2 free, ~35 more on the paid balance |
 | ElevenLabs | 1,555 characters (turbo model bills at 50%) | 300,000/mo (Creator) | ~190 |
 | Shotstack (v1) | 1 render, 3:56 of video | 20 min/mo free production + 10 trial credits | ~5 |
-| Anthropic | 1 plan call + 11 code calls on Opus 5 | pay as you go | roughly $1 per paper |
+| Anthropic (Opus 5) | plan: 17.5k in / 3.7k out = $0.18; each slide: 2.3k in / 3.3k out = $0.095 (measured 2026-09-23) | pay as you go | **$1.23 per paper**; $0.49 on Sonnet 5 |
 | Mistral | 0 (pypdf extracted the text) | not needed for born-digital PDFs | — |
 | Vercel, Neon, R2 | — | free tiers | unlimited for this traffic |
 Shotstack is the tightest free budget. Switch `SHOTSTACK_ENV` to `stage` for unlimited watermarked renders if it runs out.
+
+**Bottom line per paper:** about **$1.25 in cash** while Kodisc, ElevenLabs and Shotstack stay inside their allowances (only Anthropic is pay-as-you-go). If every vendor were paid at list price it would be roughly **$3.50–4.00** (Anthropic $1.23, Kodisc ~$0.55–1.10 at their plan-implied rate, Shotstack $1.18 at $0.30/min, ElevenLabs ~$0.11). Paper length barely matters: the 15-page paper accounted for ~15k input tokens, about $0.08, so each extra page costs about half a cent. The eleven fixed per-slide calls dominate.
 
 ## Decisions made
 | Decision | Why |
@@ -94,6 +95,7 @@ Shotstack is the tightest free budget. Switch `SHOTSTACK_ENV` to `stage` for unl
 
 ## Ideas for the next session (impact order)
 1. Render two slides concurrently from the browser (halves the 12-minute render phase).
+0. If cost matters more than polish, set `CODE_MODEL=claude-sonnet-5` and `PLAN_MODEL=claude-sonnet-5`: $0.49 per paper instead of $1.23. Re-check slide quality on one paper first.
 2. Kodisc `webhookUrl` + Shotstack callback instead of polling.
 3. Prompt caching on the two system prompts once they exceed the model's minimum cacheable size.
 4. MinerU hosted API as the scanned-PDF fallback.

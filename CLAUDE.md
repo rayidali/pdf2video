@@ -3,8 +3,7 @@
 **Read `docs/HANDOFF.md` first.** It is the living status doc: what is done, what is next, what env vars exist, and how to deploy. `docs/MIGRATION_PLAN.md` holds the target architecture and the step checklist.
 
 ## Branches
-- `vercel-migration` — active work. Based on the Kodisc v2 fix (PR #44). Merge this into `main` when the Vercel deploy is verified.
-- `main` — stale. Still targets Kodisc's removed v1 API. Do not build on it.
+- `main` — current. Merged from `vercel-migration` (PR #45) on 2026-09-23. Pushes to `main` auto-deploy production at https://pdf2video-wine.vercel.app.
 
 ## Layout
 - `app/main.py` — FastAPI app, static mount, router include. Vercel auto-detects `app/main.py` as the entrypoint.
