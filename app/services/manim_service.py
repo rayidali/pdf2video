@@ -1,198 +1,130 @@
-import json
+"""Claude writes Manim scenes. Async client, Opus 5 by default, static validation by the caller."""
 import logging
-from anthropic import Anthropic
-from typing import Optional
 
-from app.models.schemas import SlideContent, ManimSlide
-from app.services.manim_validator import ManimValidator, validator
+from anthropic import AsyncAnthropic
+
+from app.models.schemas import ManimSlide, SlideContent
+from app.services.manim_validator import format_error_report
 
 logger = logging.getLogger(__name__)
 
-# Maximum number of fix attempts for broken code
-MAX_FIX_ATTEMPTS = 3
-
-SYSTEM_PROMPT = """You are an expert Manim developer who creates beautiful 3Blue1Brown-style mathematical animations.
-
-Your job: Take a visual description for a slide and generate working Manim Community Edition code that creates that animation.
-
-## MANIM STYLE GUIDELINES
-
-Follow 3Blue1Brown's visual style:
-- **Colors**: Use a dark background (default). Primary colors: BLUE, YELLOW, GREEN, RED, WHITE. Use color constants from Manim.
-- **Typography**: Use Tex for math, Text for regular text. Keep text minimal and large.
-- **Animation**: Smooth animations with Write, FadeIn, Transform, MoveToTarget. Use appropriate run_time (1-3 seconds typically).
-- **Layout**: Center important elements. Use arrange(), next_to(), shift() for positioning.
-- **Pacing**: Add self.wait() between animations for breathing room.
-
-## CODE REQUIREMENTS
-
-1. Create a single Scene class that inherits from Scene
-2. Class name should be descriptive (e.g., `class TransformerAttention(Scene):`)
-3. All animation logic goes in the `construct(self)` method
-4. Use Manim Community Edition syntax (not ManimGL or old Manim)
-5. Import statement should be: `from manim import *`
-6. Code must be complete and runnable
-
-## VISUAL TYPES AND APPROACHES
-
-- **diagram**: Use shapes (Rectangle, Circle, Arrow, Line), VGroup for grouping, arrange for layout
-- **equation**: Use MathTex for LaTeX equations, TransformMatchingTex for equation morphing
-- **graph**: Use Axes, plot methods, dots and lines
-- **comparison**: Split screen with VGroup, use side-by-side layout
-- **timeline**: Horizontal arrow with labeled points
-- **text_reveal**: Write animation for text, maybe with highlights
-- **code_walkthrough**: Use Code class or Text with monospace font
+SYSTEM_PROMPT = """You are an expert Manim Community Edition developer. You produce code that renders successfully on the FIRST try on a remote Manim render farm. Reliability beats sophistication.
 
 ## OUTPUT FORMAT
+Output ONLY raw Python code. No markdown fences, no prose, no explanations. The first line must be `from manim import *`.
 
-Output ONLY the Python code, no markdown code blocks or explanations. The code should be directly executable.
+## CODE STRUCTURE (NON-NEGOTIABLE)
+1. Single `from manim import *` import.
+2. Exactly one class inheriting from `Scene`. Use the EXACT class name the user specifies (e.g., `Slide001`).
+3. All animation logic inside `def construct(self):`.
+4. Set background explicitly at the top of construct: `self.camera.background_color = "#000000"`.
+5. End with `self.wait(1.5)` with everything still on screen. NEVER fade out, clear, or remove the final objects. The last frame is held on screen while the narrator finishes speaking, so it must be the complete, meaningful final state of the slide.
 
-Example output format:
+## HARD BANS (these break renders)
+- DO NOT use `MathTex`, `Tex`, or any LaTeX. No exceptions. Render math with `Text("a^2 + b^2 = c^2")`.
+- DO NOT use 3D scenes, `ThreeDScene`, `ThreeDAxes`, camera rotation, or `MovingCameraScene`.
+- DO NOT use `Code`, `ImageMobject`, `SVGMobject`, or any external asset.
+- DO NOT use `random`, `numpy.random`, physics simulation, collision detection, or `always_redraw` with stateful closures.
+- DO NOT define helper classes other than the one Scene class.
+- DO NOT use f-strings inside `Text(...)`. Pre-build the string in a variable.
+
+## ALLOWED PRIMITIVES
+- Mobjects: `Text`, `Circle`, `Rectangle`, `Square`, `RoundedRectangle`, `Line`, `Arrow`, `DoubleArrow`, `Dot`, `VGroup`, `Axes`, `NumberLine`.
+- Animations: `FadeIn`, `FadeOut` (only for intermediate elements, never the final state), `Write`, `Create`, `Transform`, `ReplacementTransform`, `GrowArrow`, `GrowFromCenter`, `Indicate`, `.animate`.
+- Layout: `.to_edge(UP/DOWN/LEFT/RIGHT, buff=...)`, `.next_to(other, DOWN, buff=...)`, `.move_to(...)`, `.shift(...)`, `VGroup(...).arrange(DOWN, buff=...)`, `.scale(...)`.
+
+## SAFETY RULES
+- Stay inside the visible frame: x in [-6.5, 6.5], y in [-3.5, 3.5]. Prefer `.to_edge` and `.arrange` over absolute coordinates.
+- Cap total mobjects at 14.
+- Cap text at 60 characters per Text mobject; split long ideas across lines.
+- Use hex color strings ("#58C4DD") or Manim constants (BLUE, YELLOW, GREEN, RED, WHITE, GRAY). NEVER bare strings like "blue".
+- Use `font_size=` for Text. 32-40 for body, 52-56 for titles.
+- Total animation 8-15 seconds of motion, then hold.
+- Never reference a variable before assigning it. Every animated mobject must first be added via `self.add` or a `self.play(Create/Write/FadeIn(...))`.
+
+## STYLE
+- Black background, primary color #58C4DD (cyan), accent #FFD166 (yellow), white body text.
+- Title at top via `.to_edge(UP, buff=0.7)`. Body content centered or grouped via `VGroup(...).arrange(DOWN)`.
+- Smooth `run_time` 0.4-0.8s per animation, with `self.wait(0.3)` between for pacing.
+- Show the concept visually (shapes, arrows, growth, transformation). Key points appear as short labels, not paragraphs.
+
+## EXAMPLE (mirror this structure)
 from manim import *
 
-class SlideTitle(Scene):
+class ExampleSlide(Scene):
     def construct(self):
-        # Your animation code here
-        title = Text("Example")
-        self.play(Write(title))
-        self.wait()
+        self.camera.background_color = "#000000"
+        title = Text("Concept Name", color="#58C4DD", font_size=54, weight=BOLD).to_edge(UP, buff=0.7)
+        box_a = RoundedRectangle(width=3, height=1.4, color="#58C4DD").shift(LEFT * 3)
+        box_b = RoundedRectangle(width=3, height=1.4, color="#FFD166").shift(RIGHT * 3)
+        label_a = Text("Old way", font_size=32).move_to(box_a)
+        label_b = Text("New way", font_size=32).move_to(box_b)
+        arrow = Arrow(box_a.get_right(), box_b.get_left(), color=WHITE)
+        note = Text("3x faster", color="#FFD166", font_size=36).next_to(arrow, DOWN, buff=0.6)
+
+        self.play(FadeIn(title, shift=DOWN * 0.2), run_time=0.5)
+        self.play(Create(box_a), Write(label_a), run_time=0.7)
+        self.wait(0.3)
+        self.play(GrowArrow(arrow), run_time=0.6)
+        self.play(Create(box_b), Write(label_b), run_time=0.7)
+        self.wait(0.3)
+        self.play(FadeIn(note, shift=UP * 0.2), run_time=0.5)
+        self.wait(1.5)
 """
 
-FIX_SYSTEM_PROMPT = """You are an expert Manim debugger. Your job is to fix broken Manim code.
+FIX_SYSTEM_PROMPT = """You are an expert Manim Community Edition debugger. Fix broken Manim code so it renders successfully on a remote render farm.
 
-You will receive:
-1. The original Manim code that has errors
-2. A list of specific errors found in the code
+You will receive the original code and either static-analysis problems or a runtime error reported by the renderer.
 
-Your task:
-1. Analyze each error carefully
-2. Fix ALL the errors while preserving the original animation intent
-3. Return ONLY the corrected Python code, no explanations
+Rules:
+1. Return ONLY the corrected Python code. No markdown fences, no prose.
+2. The first line must be `from manim import *`.
+3. Preserve the EXACT class name from the original code.
+4. If the error mentions LaTeX/MathTex/Tex, replace every `MathTex(...)` and `Tex(...)` with plain `Text(...)`. LaTeX is unavailable on the renderer.
+5. Strip any `Code`, `ImageMobject`, `SVGMobject`, `ThreeDScene`, `MovingCameraScene`, `random`, `numpy.random` usages. Replace with `Text`/`Rectangle`/`VGroup` equivalents.
+6. Keep all elements within x in [-6.5, 6.5] and y in [-3.5, 3.5].
+7. Ensure every animated mobject was added via `self.play(Create/FadeIn/Write(...))` or `self.add(...)` before being transformed.
+8. End the construct method with `self.wait(1.5)` and everything still on screen. Do not fade out or clear the final frame.
+9. Do not introduce helper classes. Single Scene only. Simplify aggressively if that is what it takes to render.
 
-Common fixes:
-- Syntax errors: Fix typos, missing colons, incorrect indentation
-- Import errors: Ensure 'from manim import *' is present
-- Name errors: Use correct Manim class/function names (e.g., MathTex not MathTeX)
-- Type errors: Ensure correct argument types for Manim functions
-- Missing construct: Ensure the Scene class has a construct(self) method
+Output ONLY the corrected Python code."""
 
-Output ONLY the fixed Python code, nothing else."""
+
+def _text_of(response) -> str:
+    """Concatenate text blocks; thinking blocks may precede them on Opus 5."""
+    return "".join(getattr(b, "text", "") for b in response.content if getattr(b, "type", "") == "text")
+
+
+def clean_code(response_text: str) -> str:
+    code = response_text.strip()
+    if code.startswith("```python"):
+        code = code[9:]
+    elif code.startswith("```"):
+        code = code[3:]
+    if code.endswith("```"):
+        code = code[:-3]
+    code = code.strip()
+    if not code.startswith("from manim import"):
+        code = "from manim import *\n\n" + code
+    return code
 
 
 class ManimService:
-    def __init__(self, api_key: str, skip_validation: bool = False):
+    def __init__(self, api_key: str, model: str = "claude-opus-5"):
         if not api_key:
-            logger.warning("ANTHROPIC_API_KEY not set - manim generation will fail")
-        self.api_key = api_key
-        self.client = Anthropic(api_key=api_key) if api_key else None
-        self.model = "claude-sonnet-4-5-20250929"
-        self.validator = validator
-        self.skip_validation = skip_validation
+            logger.warning("ANTHROPIC_API_KEY not set - Manim generation will fail")
+        self.client = AsyncAnthropic(api_key=api_key) if api_key else None
+        self.model = model
 
-    def _clean_code(self, response_text: str) -> str:
-        """Clean up Claude's response to extract pure Python code."""
-        code = response_text.strip()
+    def is_configured(self) -> bool:
+        return self.client is not None
 
-        # Remove markdown code blocks if present
-        if code.startswith("```python"):
-            code = code[9:]
-        elif code.startswith("```"):
-            code = code[3:]
-        if code.endswith("```"):
-            code = code[:-3]
-        code = code.strip()
-
-        # Ensure the code starts with the import
-        if not code.startswith("from manim import"):
-            code = "from manim import *\n\n" + code
-
-        return code
-
-    def _request_fix(self, code: str, errors: list[str], expected_class: str) -> str:
-        """Request Claude to fix broken code."""
-        error_report = self.validator.format_error_report(code, errors)
-
-        fix_prompt = f"""Fix the following Manim code. The class name must be `{expected_class}`.
-
-{error_report}
-
-Return ONLY the corrected Python code."""
-
-        logger.info(f"Requesting code fix from Claude...")
-
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=4000,
-            messages=[
-                {"role": "user", "content": fix_prompt}
-            ],
-            system=FIX_SYSTEM_PROMPT
-        )
-
-        fixed_code = self._clean_code(response.content[0].text)
-        logger.info(f"Received fixed code ({len(fixed_code)} chars)")
-        logger.info(f"Fix token usage - Input: {response.usage.input_tokens}, Output: {response.usage.output_tokens}")
-
-        return fixed_code
-
-    def _validate_and_fix(
-        self,
-        code: str,
-        expected_class: str,
-        max_attempts: int = MAX_FIX_ATTEMPTS
-    ) -> tuple[str, bool, list[str]]:
-        """
-        Validate code and attempt to fix if errors are found.
-
-        Returns:
-            (final_code, is_valid, remaining_errors)
-        """
-        # Skip validation if disabled (for testing without manim installed)
-        if self.skip_validation:
-            logger.info("Validation skipped (skip_validation=True)")
-            return code, True, []
-
-        for attempt in range(max_attempts + 1):
-            # Validate the code (skip import check since manim may not be installed in API server)
-            is_valid, errors = self.validator.validate(
-                code,
-                expected_class,
-                skip_import_check=True  # Server likely doesn't have manim installed
-            )
-
-            if is_valid:
-                if attempt > 0:
-                    logger.info(f"Code fixed successfully after {attempt} attempt(s)")
-                return code, True, []
-
-            logger.warning(f"Validation failed (attempt {attempt + 1}/{max_attempts + 1}): {errors}")
-
-            # If we've exhausted fix attempts, return with errors
-            if attempt >= max_attempts:
-                logger.error(f"Failed to fix code after {max_attempts} attempts")
-                return code, False, errors
-
-            # Request a fix from Claude
-            code = self._request_fix(code, errors, expected_class)
-
-        return code, False, errors
-
-    async def generate_slide_code(
-        self,
-        slide: SlideContent,
-        paper_title: str,
-        paper_summary: str
-    ) -> ManimSlide:
-        """
-        Generate Manim code for a single slide based on its visual description.
-        """
+    async def generate_slide_code(self, slide: SlideContent, paper_title: str, paper_summary: str) -> ManimSlide:
         if not self.client:
-            raise ValueError("ANTHROPIC_API_KEY not configured.")
-
-        slide_id = f"s{slide.slide_number:03d}"
-        logger.info(f"Generating Manim code for slide {slide_id}: {slide.title}")
-
-        user_prompt = f"""Generate Manim code for this slide:
+            raise RuntimeError("ANTHROPIC_API_KEY not configured")
+        class_name = f"Slide{slide.slide_number:03d}"
+        points = "\n".join(f"- {p}" for p in slide.key_points)
+        user_prompt = f"""Generate Manim code for this slide.
 
 **Paper Context:**
 - Title: {paper_title}
@@ -200,74 +132,46 @@ Return ONLY the corrected Python code."""
 
 **Slide {slide.slide_number}: {slide.title}**
 - Visual Type: {slide.visual_type.value}
-- Duration: {slide.duration_seconds} seconds
+- Narration length: about {slide.duration_seconds} seconds (the final frame is held for the remainder)
 
 **Visual Description:**
 {slide.visual_description}
 
-**Key Points to Visualize:**
-{chr(10).join(f"- {point}" for point in slide.key_points)}
+**Key Points to show as short labels:**
+{points}
 
-**Voiceover (for timing reference):**
+**Voiceover (for reference only):**
 {slide.voiceover_script}
 
-Generate complete, working Manim code for this slide. The class name should be `Slide{slide.slide_number:03d}` (e.g., Slide001, Slide002).
-Make the animation approximately {slide.duration_seconds} seconds long using appropriate self.wait() calls."""
+The class name must be `{class_name}`. Animate for 8-15 seconds, then hold the complete final frame with `self.wait(1.5)`."""
 
-        logger.info(f"Sending request to Claude for slide {slide_id}...")
-
-        response = self.client.messages.create(
+        logger.info(f"[Manim] generating {class_name} with {self.model}")
+        response = await self.client.messages.create(
             model=self.model,
-            max_tokens=4000,
-            messages=[
-                {"role": "user", "content": user_prompt}
-            ],
-            system=SYSTEM_PROMPT
+            max_tokens=8000,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
         )
-
-        response_text = response.content[0].text
-        logger.info(f"Received Manim code for slide {slide_id} ({len(response_text)} chars)")
-        logger.info(f"Token usage - Input: {response.usage.input_tokens}, Output: {response.usage.output_tokens}")
-
-        # Clean up the response
-        code = self._clean_code(response_text)
-        expected_class = f"Slide{slide.slide_number:03d}"
-
-        # Validate and fix if needed
-        code, is_valid, errors = self._validate_and_fix(code, expected_class)
-
-        if not is_valid:
-            logger.error(f"Slide {slide_id} has validation errors that could not be fixed: {errors}")
-            # Still return the code, but log the warning
-            # The code may still work at runtime even if static validation fails
-
+        code = clean_code(_text_of(response))
+        logger.info(f"[Manim] {class_name}: {len(code)} chars, in={response.usage.input_tokens} out={response.usage.output_tokens}")
         return ManimSlide(
             slide_number=slide.slide_number,
-            class_name=expected_class,
+            class_name=class_name,
             manim_code=code,
-            expected_duration=float(slide.duration_seconds)
+            expected_duration=float(slide.duration_seconds),
         )
 
-    async def generate_all_slides(
-        self,
-        slides: list[SlideContent],
-        paper_title: str,
-        paper_summary: str
-    ) -> list[ManimSlide]:
-        """
-        Generate Manim code for all slides sequentially.
-        """
-        logger.info(f"Starting Manim code generation for {len(slides)} slides...")
-
-        manim_slides = []
-        for slide in slides:
-            try:
-                manim_slide = await self.generate_slide_code(slide, paper_title, paper_summary)
-                manim_slides.append(manim_slide)
-                logger.info(f"Successfully generated code for slide {slide.slide_number}")
-            except Exception as e:
-                logger.error(f"Failed to generate code for slide {slide.slide_number}: {e}")
-                raise
-
-        logger.info(f"Completed Manim code generation for all {len(manim_slides)} slides")
-        return manim_slides
+    async def fix_code(self, code: str, errors: list[str], class_name: str) -> str:
+        if not self.client:
+            raise RuntimeError("ANTHROPIC_API_KEY not configured")
+        prompt = f"Fix the following Manim code. The class name must be `{class_name}`.\n\n{format_error_report(code, errors)}\nReturn ONLY the corrected Python code."
+        logger.info(f"[Manim] requesting fix for {class_name}")
+        response = await self.client.messages.create(
+            model=self.model,
+            max_tokens=8000,
+            system=FIX_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        fixed = clean_code(_text_of(response))
+        logger.info(f"[Manim] fix for {class_name}: {len(fixed)} chars")
+        return fixed

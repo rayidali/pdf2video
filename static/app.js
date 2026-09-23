@@ -1,1516 +1,471 @@
-// DOM Elements
-const dropZone = document.getElementById('drop-zone');
-const fileInput = document.getElementById('file-input');
-const fileInfo = document.getElementById('file-info');
-const fileName = document.getElementById('file-name');
-const removeFileBtn = document.getElementById('remove-file');
-const uploadBtn = document.getElementById('upload-btn');
-const uploadSection = document.getElementById('upload-section');
-const processingSection = document.getElementById('processing-section');
-const resultsSection = document.getElementById('results-section');
-const jobIdEl = document.getElementById('job-id');
-const jobStatusEl = document.getElementById('job-status');
-const processBtn = document.getElementById('process-btn');
-const processingSpinner = document.getElementById('processing-spinner');
-const markdownPreview = document.getElementById('markdown-preview');
-const markdownRaw = document.getElementById('markdown-raw');
-const copyBtn = document.getElementById('copy-btn');
-const newUploadBtn = document.getElementById('new-upload-btn');
-const tabBtns = document.querySelectorAll('.tab-btn');
-const planBtn = document.getElementById('plan-btn');
-const planSection = document.getElementById('plan-section');
-const planSpinner = document.getElementById('plan-spinner');
-const planContent = document.getElementById('plan-content');
-const planTitle = document.getElementById('plan-title');
-const planSummary = document.getElementById('plan-summary');
-const planDuration = document.getElementById('plan-duration');
-const planSlidesCount = document.getElementById('plan-slides-count');
-const slidesContainer = document.getElementById('slides-container');
-const planJson = document.getElementById('plan-json');
-const copyPlanBtn = document.getElementById('copy-plan-btn');
-const newUploadBtnResults = document.getElementById('new-upload-btn-results');
-const manimBtn = document.getElementById('manim-btn');
-const manimSection = document.getElementById('manim-section');
-const manimSpinner = document.getElementById('manim-spinner');
-const manimContent = document.getElementById('manim-content');
-const manimSlidesCount = document.getElementById('manim-slides-count');
-const manimSlidesContainer = document.getElementById('manim-slides-container');
-const voiceoverBtn = document.getElementById('voiceover-btn');
-const voiceoverSection = document.getElementById('voiceover-section');
-const voiceoverSpinner = document.getElementById('voiceover-spinner');
-const voiceoverContent = document.getElementById('voiceover-content');
-const voiceoverSlidesCount = document.getElementById('voiceover-slides-count');
-const voiceoverSlidesContainer = document.getElementById('voiceover-slides-container');
-const finalVideoBtn = document.getElementById('final-video-btn');
-const finalVideoSection = document.getElementById('final-video-section');
-const finalVideoSpinner = document.getElementById('final-video-spinner');
-const finalVideoContent = document.getElementById('final-video-content');
-const finalVideoPlayer = document.getElementById('final-video-player');
-const downloadFinalVideoBtn = document.getElementById('download-final-video-btn');
+'use strict';
+/*
+ * Paper to Video — browser-side pipeline driver.
+ *
+ * The server does one bounded unit of work per request. This script sequences them:
+ *   upload+OCR → plan → (render slide n → poll)* → (voice slide n)* → assemble → poll
+ * Every step persists on the server, so a job can be resumed by id after a reload.
+ */
 
-// State
-let selectedFile = null;
-let currentJobId = null;
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const POLL_RENDER_MS = 4000;
+const POLL_ASSEMBLE_MS = 5000;
 
-// File Selection
-dropZone.addEventListener('click', (e) => {
-    // Only trigger if clicking the drop zone itself, not the label/button inside
-    if (e.target === dropZone || e.target.closest('.drop-zone-content') && !e.target.closest('label')) {
-        fileInput.click();
-    }
-});
-
-dropZone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropZone.classList.add('drag-over');
-});
-
-dropZone.addEventListener('dragleave', () => {
-    dropZone.classList.remove('drag-over');
-});
-
-dropZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
-
-    const files = e.dataTransfer.files;
-    if (files.length > 0 && files[0].type === 'application/pdf') {
-        handleFileSelect(files[0]);
-    } else {
-        showToast('Please select a PDF file', 'error');
-    }
-});
-
-fileInput.addEventListener('change', (e) => {
-    if (e.target.files.length > 0) {
-        handleFileSelect(e.target.files[0]);
-    }
-});
-
-function handleFileSelect(file) {
-    selectedFile = file;
-    fileName.textContent = file.name;
-    dropZone.classList.add('hidden');
-    fileInfo.classList.remove('hidden');
-    uploadBtn.disabled = false;
-}
-
-removeFileBtn.addEventListener('click', () => {
-    selectedFile = null;
-    fileInput.value = '';
-    dropZone.classList.remove('hidden');
-    fileInfo.classList.add('hidden');
-    uploadBtn.disabled = true;
-});
-
-// Workflow elements
-const workflowSection = document.getElementById('workflow-section');
-const workflowSpacer = document.getElementById('workflow-spacer');
-const workflowStatus = document.getElementById('workflow-status');
-const beginWorkflowBtn = document.getElementById('begin-workflow-btn');
-const cancelWorkflowBtn = document.getElementById('cancel-workflow-btn');
-const workflowCurrentTask = document.getElementById('workflow-current-task');
-const workflowEta = document.getElementById('workflow-eta');
-let workflowCancelled = false;
-let workflowStartTime = null;
-
-// Estimated times for each stage (in seconds)
-const STAGE_TIMES = {
-    ocr: 30,
-    plan: 45,
-    videos: 300,  // 5 minutes for ~11 slides
-    voiceovers: 120,  // 2 minutes
-    final: 180  // 3 minutes
+const state = {
+  config: null,
+  jobId: null,
+  job: null,
+  running: false,
+  cancelRequested: false,
+  passcode: '',
+  file: null,
 };
 
-// Make workflow sticky on scroll
-window.addEventListener('scroll', () => {
-    if (!workflowSection || workflowSection.classList.contains('hidden')) return;
-
-    const rect = workflowSection.getBoundingClientRect();
-    if (rect.top <= 0 && !workflowSection.classList.contains('sticky')) {
-        workflowSection.classList.add('sticky');
-        if (workflowSpacer) workflowSpacer.classList.add('active');
-    } else if (rect.top > 0 || (workflowSpacer && workflowSpacer.getBoundingClientRect().top > 0)) {
-        workflowSection.classList.remove('sticky');
-        if (workflowSpacer) workflowSpacer.classList.remove('active');
-    }
-});
-
-// Upload - now shows workflow section
-uploadBtn.addEventListener('click', async () => {
-    if (!selectedFile) return;
-
-    uploadBtn.disabled = true;
-    uploadBtn.textContent = 'Uploading...';
-
-    try {
-        const formData = new FormData();
-        formData.append('file', selectedFile);
-
-        const response = await fetch('/api/upload', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Upload failed');
-        }
-
-        const data = await response.json();
-        currentJobId = data.job_id;
-
-        // Show workflow section instead of processing section
-        uploadSection.classList.add('hidden');
-        workflowSection.classList.remove('hidden');
-
-        // Mark upload step as complete
-        updateWorkflowStep('upload', 'completed', 'PDF uploaded successfully');
-
-        showToast('PDF uploaded successfully!', 'success');
-        uploadBtn.textContent = 'Upload PDF';
-    } catch (error) {
-        showToast(error.message, 'error');
-        uploadBtn.disabled = false;
-        uploadBtn.textContent = 'Upload PDF';
-    }
-});
-
-// Workflow step management
-function updateWorkflowStep(step, status, description) {
-    const stepEl = document.querySelector(`.workflow-step[data-step="${step}"]`);
-    if (!stepEl) return;
-
-    // Remove all status classes
-    stepEl.classList.remove('active', 'completed', 'error');
-
-    // Add new status class
-    if (status) {
-        stepEl.classList.add(status);
-    }
-
-    // Update description
-    if (description) {
-        const descEl = stepEl.querySelector('.step-description');
-        if (descEl) descEl.textContent = description;
-    }
+// ---------------------------------------------------------------------------
+// API
+// ---------------------------------------------------------------------------
+async function api(path, opts = {}) {
+  const headers = Object.assign({}, opts.headers || {});
+  if (state.passcode) headers['X-Passcode'] = state.passcode;
+  const res = await fetch(path, Object.assign({}, opts, { headers }));
+  let body = null;
+  try { body = await res.json(); } catch (_) { /* non-JSON */ }
+  if (!res.ok) {
+    const msg = (body && (body.detail || body.error)) || `${res.status} ${res.statusText}`;
+    const err = new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    err.status = res.status;
+    throw err;
+  }
+  return body;
 }
 
-function setWorkflowStatus(message, currentStage = null) {
-    if (workflowCurrentTask) {
-        workflowCurrentTask.textContent = message;
-    }
+// ---------------------------------------------------------------------------
+// Small UI helpers
+// ---------------------------------------------------------------------------
+const show = (el) => el && el.classList.remove('hidden');
+const hide = (el) => el && el.classList.add('hidden');
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-    // Update ETA based on current stage
-    if (currentStage && workflowEta) {
-        const stages = ['ocr', 'plan', 'videos', 'voiceovers', 'final'];
-        const currentIndex = stages.indexOf(currentStage);
-        if (currentIndex >= 0) {
-            let remainingTime = 0;
-            for (let i = currentIndex; i < stages.length; i++) {
-                remainingTime += STAGE_TIMES[stages[i]];
-            }
-            const minutes = Math.ceil(remainingTime / 60);
-            workflowEta.textContent = `Estimated time remaining: ~${minutes} min`;
-        }
-    }
-
-    // Show/hide spinner
-    if (workflowStatus) {
-        if (message.includes('complete') || message.includes('Ready')) {
-            workflowStatus.classList.remove('processing');
-            if (workflowEta) workflowEta.textContent = '';
-        } else {
-            workflowStatus.classList.add('processing');
-        }
-    }
+function toast(message, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = message;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), type === 'error' ? 8000 : 3000);
 }
 
-// Begin Workflow - runs all stages automatically
-if (beginWorkflowBtn) {
-    beginWorkflowBtn.addEventListener('click', async () => {
-        if (!currentJobId) {
-            showToast('No job ID found', 'error');
-            return;
-        }
-
-        workflowCancelled = false;
-        beginWorkflowBtn.classList.add('hidden');
-        cancelWorkflowBtn.classList.remove('hidden');
-
-        try {
-            await runAutomatedWorkflow();
-        } catch (error) {
-            console.error('Workflow error:', error);
-            showToast(error.message, 'error');
-            setWorkflowStatus('Workflow failed: ' + error.message);
-        }
-
-        beginWorkflowBtn.classList.remove('hidden');
-        cancelWorkflowBtn.classList.add('hidden');
-    });
+function setStatus(text, eta = '') {
+  $('status-text').textContent = text;
+  $('eta-text').textContent = eta;
 }
 
-if (cancelWorkflowBtn) {
-    cancelWorkflowBtn.addEventListener('click', () => {
-        workflowCancelled = true;
-        setWorkflowStatus('Cancelling workflow...');
-        showToast('Workflow cancelled', 'info');
-    });
+function setStep(name, status, description) {
+  const el = document.querySelector(`.workflow-step[data-step="${name}"]`);
+  if (!el) return;
+  el.classList.remove('active', 'completed', 'failed', 'pending');
+  if (status) el.classList.add(status);
+  el.querySelector('.step-status').textContent = { active: '…', completed: '✓', failed: '✗' }[status] || '';
+  if (description) el.querySelector('.step-description').textContent = description;
 }
 
-async function runAutomatedWorkflow() {
-    workflowStartTime = Date.now();
-
-    // Stage 1: OCR
-    if (workflowCancelled) return;
-    updateWorkflowStep('ocr', 'active', 'Extracting text from PDF...');
-    setWorkflowStatus('Running OCR with Mistral...', 'ocr');
-
-    try {
-        const ocrResponse = await fetch(`/api/process/${currentJobId}`, { method: 'POST' });
-        if (!ocrResponse.ok) throw new Error('OCR processing failed');
-
-        const mdResponse = await fetch(`/api/markdown/${currentJobId}`);
-        const mdData = await mdResponse.json();
-        displayMarkdown(mdData.markdown);
-
-        updateWorkflowStep('ocr', 'completed', 'Text extracted successfully');
-        resultsSection.classList.remove('hidden');
-        showToast('OCR completed!', 'success');
-    } catch (error) {
-        updateWorkflowStep('ocr', 'error', 'OCR failed: ' + error.message);
-        throw error;
-    }
-
-    // Stage 2: Generate Plan
-    if (workflowCancelled) return;
-    await new Promise(r => setTimeout(r, 1000)); // Brief pause
-    updateWorkflowStep('plan', 'active', 'Claude is creating the video plan...');
-    setWorkflowStatus('Generating presentation plan with Claude...', 'plan');
-
-    try {
-        const planResponse = await fetch(`/api/plan/${currentJobId}`, { method: 'POST' });
-        if (!planResponse.ok) throw new Error('Plan generation failed');
-
-        const planData = await planResponse.json();
-        displayPlan(planData.plan);
-
-        updateWorkflowStep('plan', 'completed', `Plan created with ${planData.plan.slides.length} slides`);
-        planSection.classList.remove('hidden');
-        planContent.classList.remove('hidden');
-        planSpinner.classList.add('hidden');
-        showToast('Plan generated!', 'success');
-    } catch (error) {
-        updateWorkflowStep('plan', 'error', 'Plan failed: ' + error.message);
-        throw error;
-    }
-
-    // Stage 3: Generate Videos
-    if (workflowCancelled) return;
-    await new Promise(r => setTimeout(r, 1000));
-    updateWorkflowStep('videos', 'active', 'Generating animated videos...');
-    setWorkflowStatus('Creating animations with Kodisc...', 'videos');
-
-    try {
-        const startResponse = await fetch(`/api/kodisc/${currentJobId}/start`, { method: 'POST' });
-        if (!startResponse.ok) throw new Error('Video generation failed to start');
-
-        const startData = await startResponse.json();
-        const totalSlides = startData.total_slides;
-
-        // Poll for video progress
-        while (true) {
-            if (workflowCancelled) return;
-            await new Promise(r => setTimeout(r, 3000));
-
-            const progressResponse = await fetch(`/api/kodisc/${currentJobId}/progress`);
-            const progress = await progressResponse.json();
-
-            updateWorkflowStep('videos', 'active', `Generating video ${progress.completed_slides}/${totalSlides}...`);
-            setWorkflowStatus(`Creating animation: ${progress.current_title || 'Processing...'}`, 'videos');
-
-            if (progress.status === 'complete') {
-                displayVideoResults(progress.results);
-                updateWorkflowStep('videos', 'completed', `${progress.successful} videos created`);
-                manimSection.classList.remove('hidden');
-                manimContent.classList.remove('hidden');
-                manimSpinner.classList.add('hidden');
-                showToast('Videos generated!', 'success');
-                break;
-            }
-
-            if (progress.status === 'error' || progress.status === 'cancelled') {
-                throw new Error(progress.error || 'Video generation failed');
-            }
-        }
-    } catch (error) {
-        updateWorkflowStep('videos', 'error', 'Videos failed: ' + error.message);
-        throw error;
-    }
-
-    // Stage 4: Generate Voiceovers
-    if (workflowCancelled) return;
-    await new Promise(r => setTimeout(r, 1000));
-    updateWorkflowStep('voiceovers', 'active', 'Generating voice narration...');
-    setWorkflowStatus('Creating voiceovers with ElevenLabs...', 'voiceovers');
-
-    try {
-        const voiceStartResponse = await fetch(`/api/voiceover/${currentJobId}/start`, { method: 'POST' });
-        if (!voiceStartResponse.ok) throw new Error('Voiceover generation failed to start');
-
-        const voiceStartData = await voiceStartResponse.json();
-        const totalVoiceovers = voiceStartData.total_slides;
-
-        // Poll for voiceover progress
-        while (true) {
-            if (workflowCancelled) return;
-            await new Promise(r => setTimeout(r, 2000));
-
-            const progressResponse = await fetch(`/api/voiceover/${currentJobId}/progress`);
-            const progress = await progressResponse.json();
-
-            updateWorkflowStep('voiceovers', 'active', `Generating voiceover ${progress.completed_slides}/${totalVoiceovers}...`);
-            setWorkflowStatus(`Creating narration: ${progress.current_title || 'Processing...'}`, 'voiceovers');
-
-            if (progress.status === 'complete') {
-                displayVoiceoverResults(progress.results);
-                updateWorkflowStep('voiceovers', 'completed', `${progress.successful} voiceovers created`);
-                voiceoverSection.classList.remove('hidden');
-                voiceoverContent.classList.remove('hidden');
-                voiceoverSpinner.classList.add('hidden');
-                showToast('Voiceovers generated!', 'success');
-                break;
-            }
-
-            if (progress.status === 'error' || progress.status === 'cancelled') {
-                throw new Error(progress.error || 'Voiceover generation failed');
-            }
-        }
-    } catch (error) {
-        updateWorkflowStep('voiceovers', 'error', 'Voiceovers failed: ' + error.message);
-        throw error;
-    }
-
-    // Stage 5: Generate Final Video
-    if (workflowCancelled) return;
-    await new Promise(r => setTimeout(r, 1000));
-    updateWorkflowStep('final', 'active', 'Assembling final video...');
-    setWorkflowStatus('Rendering final video with Shotstack...', 'final');
-
-    try {
-        const renderResponse = await fetch(`/api/shotstack/${currentJobId}/render`, { method: 'POST' });
-        if (!renderResponse.ok) throw new Error('Final video render failed to start');
-
-        // Poll for render progress
-        while (true) {
-            if (workflowCancelled) return;
-            await new Promise(r => setTimeout(r, 5000));
-
-            const progressResponse = await fetch(`/api/shotstack/${currentJobId}/progress`);
-            const progress = await progressResponse.json();
-
-            const statusText = progress.shotstack_status || progress.status || 'processing';
-            updateWorkflowStep('final', 'active', `Rendering: ${statusText}...`);
-            setWorkflowStatus(`Shotstack status: ${statusText}`, 'final');
-
-            if (progress.status === 'complete' && progress.video_url) {
-                displayFinalVideo(progress.video_url);
-                updateWorkflowStep('final', 'completed', 'Final video ready!');
-                finalVideoSection.classList.remove('hidden');
-                finalVideoContent.classList.remove('hidden');
-                finalVideoSpinner.classList.add('hidden');
-                showToast('Final video ready!', 'success');
-                setWorkflowStatus('Workflow complete! Your video is ready.');
-                // Remove sticky mode when complete
-                workflowSection.classList.remove('sticky');
-                if (workflowSpacer) workflowSpacer.classList.remove('active');
-                // Scroll to final video after layout settles
-                setTimeout(() => {
-                    finalVideoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }, 100);
-                break;
-            }
-
-            if (progress.status === 'failed' || progress.status === 'error') {
-                throw new Error(progress.error || 'Final video rendering failed');
-            }
-        }
-    } catch (error) {
-        updateWorkflowStep('final', 'error', 'Final video failed: ' + error.message);
-        throw error;
-    }
+function showError(message) {
+  const box = $('error-box');
+  box.textContent = message;
+  show(box);
+  toast(message, 'error');
 }
 
-// Process OCR
-processBtn.addEventListener('click', async () => {
-    if (!currentJobId) return;
-
-    processBtn.classList.add('hidden');
-    processingSpinner.classList.remove('hidden');
-    updateStatus('processing');
-
-    try {
-        const response = await fetch(`/api/process/${currentJobId}`, {
-            method: 'POST'
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Processing failed');
-        }
-
-        const data = await response.json();
-
-        // Fetch full markdown
-        const mdResponse = await fetch(`/api/markdown/${currentJobId}`);
-        const mdData = await mdResponse.json();
-
-        // Display results
-        displayMarkdown(mdData.markdown);
-        updateStatus('complete');
-
-        processingSection.classList.add('hidden');
-        resultsSection.classList.remove('hidden');
-
-        showToast('OCR completed successfully!', 'success');
-    } catch (error) {
-        showToast(error.message, 'error');
-        updateStatus('failed');
-        processBtn.classList.remove('hidden');
-        processingSpinner.classList.add('hidden');
-    }
-});
-
-// Display Markdown
-function displayMarkdown(markdown) {
-    markdownRaw.textContent = markdown;
-    // Simple markdown to HTML conversion
-    markdownPreview.innerHTML = simpleMarkdownToHtml(markdown);
+function updateButtons() {
+  const done = state.job && state.job.final && state.job.final.status === 'done';
+  $('status-spinner').style.visibility = state.running ? 'visible' : 'hidden';
+  state.running ? show($('cancel-btn')) : hide($('cancel-btn'));
+  (!state.running && state.job && !done) ? show($('resume-run-btn')) : hide($('resume-run-btn'));
+  (!state.running && state.job) ? show($('new-job-btn')) : hide($('new-job-btn'));
 }
 
-function simpleMarkdownToHtml(md) {
-    let html = md
-        // Escape HTML
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        // Headers
-        .replace(/^### (.*$)/gm, '<h3>$1</h3>')
-        .replace(/^## (.*$)/gm, '<h2>$1</h2>')
-        .replace(/^# (.*$)/gm, '<h1>$1</h1>')
-        // Bold and Italic
-        .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.*?)\*/g, '<em>$1</em>')
-        // Code blocks
-        .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
-        // Inline code
-        .replace(/`(.*?)`/g, '<code>$1</code>')
-        // Blockquotes
-        .replace(/^> (.*$)/gm, '<blockquote>$1</blockquote>')
-        // Unordered lists
-        .replace(/^\s*[-*] (.*$)/gm, '<li>$1</li>')
-        // Paragraphs
-        .replace(/\n\n/g, '</p><p>')
-        // Line breaks
-        .replace(/\n/g, '<br>');
-
-    // Wrap in paragraph
-    html = '<p>' + html + '</p>';
-
-    // Clean up empty paragraphs
-    html = html.replace(/<p><\/p>/g, '');
-    html = html.replace(/<p>(<h[123]>)/g, '$1');
-    html = html.replace(/(<\/h[123]>)<\/p>/g, '$1');
-    html = html.replace(/<p>(<pre>)/g, '$1');
-    html = html.replace(/(<\/pre>)<\/p>/g, '$1');
-    html = html.replace(/<p>(<blockquote>)/g, '$1');
-    html = html.replace(/(<\/blockquote>)<\/p>/g, '$1');
-
-    // Wrap consecutive li elements in ul
-    html = html.replace(/(<li>.*?<\/li>)+/gs, '<ul>$&</ul>');
-
-    return html;
+function slideKeys() {
+  return Object.keys(state.job.slides || {}).sort((a, b) => Number(a) - Number(b));
 }
 
-// Tabs
-tabBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-        const tab = btn.dataset.tab;
-
-        tabBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-
-        document.querySelectorAll('.tab-content').forEach(content => {
-            content.classList.remove('active');
-            content.classList.add('hidden');
-        });
-
-        const activeTab = document.getElementById(`${tab}-tab`);
-        activeTab.classList.remove('hidden');
-        activeTab.classList.add('active');
-    });
-});
-
-// Copy Markdown
-copyBtn.addEventListener('click', async () => {
-    try {
-        await navigator.clipboard.writeText(markdownRaw.textContent);
-        showToast('Markdown copied to clipboard!', 'success');
-    } catch (error) {
-        showToast('Failed to copy', 'error');
-    }
-});
-
-// Generate Plan (or view cached plan)
-planBtn.addEventListener('click', async () => {
-    if (!currentJobId) {
-        console.error('No job ID found');
-        return;
-    }
-
-    console.log('=== Plan Generation/View ===');
-    console.log('Job ID:', currentJobId);
-
-    planBtn.disabled = true;
-    planBtn.textContent = 'Checking...';
-
-    try {
-        // First check if plan already exists (cached)
-        console.log('Checking for cached plan...');
-        const cacheResponse = await fetch(`/api/plan/${currentJobId}`);
-
-        if (cacheResponse.ok) {
-            const cacheData = await cacheResponse.json();
-
-            // If we have a cached plan, show it directly
-            if (cacheData.plan && cacheData.plan.slides && cacheData.plan.slides.length > 0) {
-                console.log('Found cached plan:', cacheData.plan.slides.length, 'slides');
-                displayPlan(cacheData.plan);
-
-                planSection.classList.remove('hidden');
-                planSpinner.classList.add('hidden');
-                planContent.classList.remove('hidden');
-                resultsSection.classList.add('hidden');
-
-                planSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-                showToast(`Loaded cached plan with ${cacheData.plan.slides.length} slides`, 'success');
-                planBtn.disabled = false;
-                planBtn.textContent = 'View Plan';
-
-                // Also check if videos exist to update that button
-                checkVideosExist();
-                return;
-            }
-        }
-
-        // No cached plan - generate new one
-        console.log('No cached plan found, generating...');
-        planBtn.textContent = 'Generating...';
-
-        // Show plan section with spinner
-        planSection.classList.remove('hidden');
-        planSpinner.classList.remove('hidden');
-        planContent.classList.add('hidden');
-
-        // Scroll to plan section so user can see the spinner
-        planSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-        console.log('Calling API: POST /api/plan/' + currentJobId);
-
-        const response = await fetch(`/api/plan/${currentJobId}`, {
-            method: 'POST'
-        });
-
-        console.log('Response status:', response.status);
-
-        if (!response.ok) {
-            const error = await response.json();
-            console.error('API Error:', error);
-            throw new Error(error.detail || 'Planning failed');
-        }
-
-        const data = await response.json();
-        console.log('Plan received:', data);
-        console.log('Number of slides:', data.plan?.slides?.length);
-
-        displayPlan(data.plan);
-
-        planSpinner.classList.add('hidden');
-        planContent.classList.remove('hidden');
-        resultsSection.classList.add('hidden');
-
-        showToast('Plan generated successfully!', 'success');
-        planBtn.disabled = false;
-        planBtn.textContent = 'View Plan';
-        console.log('=== Plan Generation Complete ===');
-    } catch (error) {
-        console.error('Planning failed:', error);
-        showToast(error.message, 'error');
-        planSpinner.classList.add('hidden');
-        planSection.classList.add('hidden');
-        planBtn.disabled = false;
-        planBtn.textContent = 'Generate Plan';
-    }
-});
-
-// Helper to check if videos exist and update button
-async function checkVideosExist() {
-    try {
-        const response = await fetch(`/api/kodisc/${currentJobId}/progress`);
-        if (response.ok) {
-            const data = await response.json();
-            if (data.status === 'complete' && data.results && data.results.length > 0) {
-                manimBtn.textContent = 'View Videos';
-            }
-        }
-    } catch (e) {
-        // Ignore errors
-    }
+function etaText() {
+  if (!state.job || !state.job.slides) return '';
+  const keys = slideKeys();
+  const toRender = keys.filter((k) => !['done', 'failed'].includes(state.job.slides[k].status)).length;
+  const toVoice = keys.filter((k) => state.job.slides[k].status !== 'failed' && (state.job.audio[k] || {}).status !== 'done').length;
+  const secs = toRender * 75 + toVoice * 12 + (state.job.final.status === 'done' ? 0 : 90);
+  return secs > 0 ? `about ${Math.max(1, Math.round(secs / 60))} min left` : '';
 }
 
-// Display Plan
-function displayPlan(plan) {
-    planTitle.textContent = plan.paper_title;
-    planSummary.textContent = plan.paper_summary;
-    planDuration.textContent = plan.target_duration_minutes;
-    planSlidesCount.textContent = plan.slides.length;
-    planJson.textContent = JSON.stringify(plan, null, 2);
+// ---------------------------------------------------------------------------
+// Rendering the job document
+// ---------------------------------------------------------------------------
+function renderJob() {
+  const job = state.job;
+  if (!job) return;
+  $('job-id-label').textContent = job.id;
+  show($('pipeline-section'));
+  hide($('upload-section'));
 
-    slidesContainer.innerHTML = '';
-    plan.slides.forEach((slide, index) => {
-        const slideEl = document.createElement('div');
-        slideEl.className = 'slide-card';
-        slideEl.innerHTML = `
-            <div class="slide-header">
-                <span class="slide-num">${slide.slide_number}</span>
-                <h4>${slide.title}</h4>
-                <span class="slide-type">${slide.visual_type}</span>
-            </div>
-            <div class="slide-body">
-                <p class="slide-visual"><strong>Visual:</strong> ${slide.visual_description}</p>
-                <div class="slide-points">
-                    <strong>Key Points:</strong>
-                    <ul>${slide.key_points.map(p => `<li>${p}</li>`).join('')}</ul>
-                </div>
-                <p class="slide-script"><strong>Narration:</strong> ${slide.voiceover_script}</p>
-                <p class="slide-duration">${slide.duration_seconds}s</p>
-            </div>
-        `;
-        slidesContainer.appendChild(slideEl);
-    });
+  setStep('ocr', job.has_markdown ? 'completed' : 'pending');
+  setStep('plan', job.plan ? 'completed' : 'pending');
+  updateStepCounts();
+  renderPlan();
+  renderVideos();
+  renderFinal();
+  updateButtons();
 }
 
-// Copy Plan JSON
-copyPlanBtn.addEventListener('click', async () => {
-    try {
-        await navigator.clipboard.writeText(planJson.textContent);
-        showToast('Plan JSON copied to clipboard!', 'success');
-    } catch (error) {
-        showToast('Failed to copy', 'error');
+function updateStepCounts() {
+  const job = state.job;
+  const keys = slideKeys();
+  if (!keys.length) return;
+  const rendered = keys.filter((k) => job.slides[k].status === 'done').length;
+  const failed = keys.filter((k) => job.slides[k].status === 'failed').length;
+  const voiced = keys.filter((k) => (job.audio[k] || {}).status === 'done').length;
+  const renderDone = rendered + failed === keys.length;
+  setStep('render', renderDone ? (rendered ? 'completed' : 'failed') : (rendered ? 'active' : 'pending'),
+    `${rendered}/${keys.length} rendered${failed ? `, ${failed} failed` : ''}`);
+  setStep('voice', voiced === keys.length - failed && renderDone ? 'completed' : (voiced ? 'active' : 'pending'),
+    `${voiced}/${keys.length} narrated`);
+  const f = job.final.status;
+  setStep('assemble', f === 'done' ? 'completed' : f === 'failed' ? 'failed' : ['submitted', 'rendering'].includes(f) ? 'active' : 'pending',
+    f === 'done' ? 'Final video ready' : f === 'failed' ? (job.final.error || 'Assembly failed') : 'Shotstack stitches video and audio');
+}
+
+function renderPlan() {
+  const plan = state.job.plan;
+  if (!plan) return;
+  show($('plan-section'));
+  $('plan-title').textContent = plan.paper_title;
+  $('plan-summary').textContent = plan.paper_summary;
+  $('plan-slides-count').textContent = plan.slides.length;
+  $('plan-slides').innerHTML = plan.slides.map((s) => `
+    <div class="slide-card">
+      <div class="slide-header">
+        <span class="slide-num">${s.slide_number}</span>
+        <h4>${esc(s.title)}</h4>
+        <span class="type-badge">${esc(s.visual_type)}</span>
+      </div>
+      <div class="slide-body">
+        <ul class="slide-points">${(s.key_points || []).map((p) => `<li>${esc(p)}</li>`).join('')}</ul>
+        <p class="slide-script">${esc(s.voiceover_script)}</p>
+      </div>
+    </div>`).join('');
+}
+
+function renderVideos() {
+  const keys = slideKeys();
+  if (!keys.length) return;
+  show($('videos-section'));
+  $('video-grid').innerHTML = keys.map((k) => {
+    const s = state.job.slides[k];
+    const media = s.video_url
+      ? `<video controls preload="metadata" ${s.thumbnail_url ? `poster="${esc(s.thumbnail_url)}"` : ''}><source src="${esc(s.video_url)}" type="video/mp4"></video>`
+      : `<div class="video-placeholder">${s.status === 'failed' ? 'render failed' : s.status === 'pending' ? 'queued' : 'rendering…'}</div>`;
+    const tier = s.tier_used ? `<span class="tier-badge">${esc(s.tier_used.replace('_', ' '))}</span>` : '';
+    const err = s.status === 'failed' && s.error ? `<p class="hint">${esc(s.error.slice(0, 160))}</p>` : '';
+    return `
+      <div class="video-card">
+        ${media}
+        <h4>${s.slide_number}. ${esc(s.title)}</h4>
+        <div class="video-meta"><span class="status-badge ${esc(s.status)}">${esc(s.status)}</span>${tier}</div>
+        ${err}
+      </div>`;
+  }).join('');
+}
+
+function renderFinal() {
+  const f = state.job.final;
+  if (!f || f.status !== 'done' || !f.video_url) return;
+  show($('final-section'));
+  const player = $('final-player');
+  if (player.src !== f.video_url) player.src = f.video_url;
+  $('download-btn').href = f.video_url;
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline driver
+// ---------------------------------------------------------------------------
+function checkCancel() {
+  if (state.cancelRequested) throw new Error('Paused. Click Resume to continue where you left off.');
+}
+
+async function runPipeline() {
+  if (state.running) return;
+  state.running = true;
+  state.cancelRequested = false;
+  hide($('error-box'));
+  updateButtons();
+  try {
+    await stepPlan();
+    await stepRender();
+    await stepVoice();
+    await stepAssemble();
+    setStatus('Done. Your video is ready below.', '');
+    toast('Video ready', 'success');
+  } catch (e) {
+    showError(e.message);
+    setStatus('Stopped.', '');
+  } finally {
+    state.running = false;
+    updateButtons();
+    loadRecentJobs();
+  }
+}
+
+async function stepPlan() {
+  if (state.job.plan) { setStep('plan', 'completed'); return; }
+  setStep('plan', 'active');
+  setStatus('Claude is reading the paper and planning 11 slides…', 'usually 1 to 3 minutes');
+  const r = await api(`/api/jobs/${state.jobId}/plan`, { method: 'POST' });
+  state.job = r.job;
+  renderJob();
+}
+
+async function stepRender() {
+  const keys = slideKeys();
+  const total = keys.length;
+  for (const key of keys) {
+    let s = state.job.slides[key];
+    const n = s.slide_number;
+    while (!['done', 'failed'].includes(s.status)) {
+      checkCancel();
+      if (s.status === 'pending' || s.status === 'retry') {
+        setStatus(`Slide ${n}/${total}: Claude is writing the Manim scene (attempt ${s.tier} of 3)…`, etaText());
+        const r = await api(`/api/jobs/${state.jobId}/slides/${n}/render`, { method: 'POST' });
+        s = r.slide;
+        state.job.slides[key] = s;
+        if (r.fatal) throw new Error(s.error || 'A vendor rejected the request. Check the API keys and credits.');
+      } else {
+        setStatus(`Slide ${n}/${total}: Kodisc is rendering the animation…`, etaText());
+        await sleep(POLL_RENDER_MS);
+        checkCancel();
+        const r = await api(`/api/jobs/${state.jobId}/slides/${n}`);
+        s = r.slide;
+        state.job.slides[key] = s;
+        if (r.fatal) throw new Error(s.error || 'A vendor rejected the request. Check the API keys and credits.');
+      }
+      renderVideos();
+      updateStepCounts();
     }
-});
+  }
+  updateStepCounts();
+  if (!keys.some((k) => state.job.slides[k].status === 'done')) {
+    throw new Error('Every slide failed to render. See the slide cards for the errors.');
+  }
+}
 
-// Generate Videos - USING KODISC API
-manimBtn.addEventListener('click', async () => {
-    if (!currentJobId) {
-        console.error('No job ID found');
-        return;
+async function stepVoice() {
+  const keys = slideKeys();
+  for (const key of keys) {
+    const s = state.job.slides[key];
+    const a = state.job.audio[key] || {};
+    if (s.status !== 'done' || ['done', 'skipped'].includes(a.status)) continue;
+    checkCancel();
+    setStatus(`Slide ${s.slide_number}/${keys.length}: ElevenLabs is recording the narration…`, etaText());
+    const r = await api(`/api/jobs/${state.jobId}/voice/${s.slide_number}`, { method: 'POST' });
+    state.job.audio[key] = r.audio;
+    updateStepCounts();
+  }
+}
+
+async function stepAssemble() {
+  let f = state.job.final;
+  if (f.status === 'done') { updateStepCounts(); renderFinal(); return; }
+  checkCancel();
+  if (f.status === 'pending' || f.status === 'failed') {
+    setStatus('Submitting the final edit to Shotstack…', etaText());
+    const r = await api(`/api/jobs/${state.jobId}/assemble`, { method: 'POST' });
+    f = r.final;
+    state.job.final = f;
+    state.job.step = r.step;
+    updateStepCounts();
+    if (f.status === 'failed') throw new Error(f.error || 'Shotstack rejected the edit');
+  }
+  while (['submitted', 'rendering'].includes(f.status)) {
+    checkCancel();
+    setStatus('Shotstack is stitching the slides and narration into one video…', 'usually 1 to 3 minutes');
+    await sleep(POLL_ASSEMBLE_MS);
+    const r = await api(`/api/jobs/${state.jobId}/assemble`);
+    f = r.final;
+    state.job.final = f;
+    state.job.step = r.step;
+    updateStepCounts();
+  }
+  if (f.status === 'failed') throw new Error(f.error || 'Final render failed');
+  renderFinal();
+}
+
+// ---------------------------------------------------------------------------
+// Entry points
+// ---------------------------------------------------------------------------
+async function startFromUpload() {
+  if (!state.file) return;
+  readPasscode();
+  $('start-btn').disabled = true;
+  hide($('error-box'));
+  show($('pipeline-section'));
+  hide($('upload-section'));
+  setStep('ocr', 'active');
+  setStatus('Uploading and extracting text with Mistral OCR…', 'usually under a minute');
+  updateButtons();
+  try {
+    const fd = new FormData();
+    fd.append('file', state.file);
+    const r = await api('/api/jobs', { method: 'POST', body: fd });
+    state.jobId = r.job.id;
+    state.job = r.job;
+    history.replaceState(null, '', `?job=${state.jobId}`);
+    renderJob();
+    await runPipeline();
+  } catch (e) {
+    if (e.status === 401) {
+      showError('That passcode was not accepted.');
+      resetToUpload();
+      show($('passcode-row'));
+      return;
     }
-
-    console.log('=== Video Generation via Kodisc API ===');
-    console.log('Job ID:', currentJobId);
-
-    manimBtn.disabled = true;
-    manimBtn.textContent = 'Checking...';
-
-    try {
-        // First check if videos already exist (cached)
-        console.log('Checking for cached videos...');
-        const cacheResponse = await fetch(`/api/kodisc/${currentJobId}/progress`);
-
-        if (cacheResponse.ok) {
-            const cacheData = await cacheResponse.json();
-
-            // If we have cached results, show them directly
-            if (cacheData.status === 'complete' && cacheData.results && cacheData.results.length > 0) {
-                console.log('Found cached videos:', cacheData.results.length);
-                displayVideoResults(cacheData.results);
-
-                manimSection.classList.remove('hidden');
-                manimSpinner.classList.add('hidden');
-                manimContent.classList.remove('hidden');
-                planSection.classList.add('hidden');
-
-                manimSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-                showToast(`Loaded ${cacheData.successful} cached videos`, 'success');
-                manimBtn.disabled = false;
-                manimBtn.textContent = 'Generate Videos';
-                return;
-            }
-        }
-
-        // No cached videos - start generation
-        console.log('No cached videos found, starting generation...');
-
-        // Show manim section with spinner
-        manimSection.classList.remove('hidden');
-        manimSpinner.classList.remove('hidden');
-        manimContent.classList.add('hidden');
-
-        // Scroll to manim section so user can see the spinner
-        manimSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-        // Start background generation via Kodisc API
-        console.log('Calling API: POST /api/kodisc/' + currentJobId + '/start');
-        const response = await fetch(`/api/kodisc/${currentJobId}/start`, {
-            method: 'POST'
-        });
-
-        console.log('Response status:', response.status);
-
-        if (!response.ok) {
-            const error = await response.json();
-            console.error('API Error:', error);
-            throw new Error(error.detail || 'Failed to start video generation');
-        }
-
-        const data = await response.json();
-        console.log('Generation started:', data);
-        console.log('Estimated cost:', data.estimated_cost);
-
-        // Poll for progress
-        manimBtn.textContent = `Generating 0/${data.total_slides}...`;
-        await pollKodiscProgress(currentJobId, data.total_slides);
-
-    } catch (error) {
-        console.error('Video generation failed:', error);
-        showToast(error.message, 'error');
-        manimSpinner.classList.add('hidden');
-        manimSection.classList.add('hidden');
-        manimBtn.disabled = false;
-        manimBtn.textContent = 'Generate Videos';
-    }
-});
-
-// Poll for Kodisc generation progress
-async function pollKodiscProgress(jobId, totalSlides) {
-    const pollInterval = 3000; // 3 seconds (Kodisc takes a bit longer)
-
-    while (true) {
-        try {
-            const response = await fetch(`/api/kodisc/${jobId}/progress`);
-            const progress = await response.json();
-
-            console.log('Progress:', progress);
-
-            // Update button with progress
-            manimBtn.textContent = `Generating ${progress.completed_slides}/${totalSlides}...`;
-
-            // Update spinner text if it exists
-            const spinnerText = manimSpinner.querySelector('p');
-            if (spinnerText) {
-                spinnerText.textContent = `Generating slide ${progress.current_slide}: ${progress.current_title || '...'}`;
-            }
-
-            if (progress.status === 'complete') {
-                // Generation complete - show results
-                displayVideoResults(progress.results);
-                manimSpinner.classList.add('hidden');
-                manimContent.classList.remove('hidden');
-                planSection.classList.add('hidden');
-
-                showToast(`Videos generated! ${progress.successful} successful, ${progress.failed} failed`, 'success');
-                console.log('=== Kodisc Video Generation Complete ===');
-                manimBtn.textContent = 'Generate Videos';
-                return;
-            }
-
-            if (progress.status === 'error' || progress.status === 'cancelled') {
-                throw new Error(progress.error || `Generation ${progress.status}`);
-            }
-
-            // Wait before polling again
-            await new Promise(resolve => setTimeout(resolve, pollInterval));
-
-        } catch (error) {
-            console.error('Progress polling error:', error);
-            throw error;
-        }
-    }
+    showError(e.message);
+    setStep('ocr', 'failed');
+    state.job = null;
+    updateButtons();
+    show($('new-job-btn'));
+  }
 }
 
-// Display Video Results (instead of just code)
-function displayVideoResults(results) {
-    manimSlidesCount.textContent = results.length;
-
-    manimSlidesContainer.innerHTML = '';
-    results.forEach((slide) => {
-        const slideEl = document.createElement('div');
-        slideEl.className = 'slide-card manim-slide';
-
-        const statusBadge = slide.status === 'success'
-            ? '<span class="status-badge complete">✓ Video Ready</span>'
-            : `<span class="status-badge failed">✗ Failed</span>`;
-
-        const videoSection = slide.status === 'success' && slide.video_url
-            ? `<div class="video-container">
-                <video controls width="100%">
-                    <source src="${slide.video_url}" type="video/mp4">
-                    Your browser does not support video playback.
-                </video>
-                <a href="${slide.video_url}" target="_blank" class="btn-small">Open Video</a>
-               </div>`
-            : slide.error
-                ? `<p class="error-msg">Error: ${slide.error}</p>`
-                : '';
-
-        slideEl.innerHTML = `
-            <div class="slide-header">
-                <span class="slide-num">${slide.slide_id}</span>
-                <h4>${slide.title}</h4>
-                ${statusBadge}
-            </div>
-            <div class="slide-body">
-                ${videoSection}
-                ${slide.render_time ? `<p class="slide-duration">Rendered in ${slide.render_time.toFixed(1)}s</p>` : ''}
-            </div>
-        `;
-        manimSlidesContainer.appendChild(slideEl);
-    });
+async function resumeJob(jobId) {
+  jobId = (jobId || '').trim();
+  if (!/^[a-f0-9]{8}$/.test(jobId)) { toast('Job ids are 8 hex characters', 'error'); return; }
+  readPasscode();
+  try {
+    state.job = await api(`/api/jobs/${jobId}`);
+  } catch (e) {
+    showErrorInline(e.message);
+    return;
+  }
+  state.jobId = jobId;
+  history.replaceState(null, '', `?job=${jobId}`);
+  renderJob();
+  if (state.job.final.status === 'done') {
+    setStatus('This job is complete.', '');
+    return;
+  }
+  if (state.job.fatal) {
+    showError(state.job.error || 'This job stopped on a vendor error. Fix the key or credits, then Resume.');
+    setStatus('Stopped.', '');
+    return;
+  }
+  await runPipeline();
 }
 
-// Display Manim Code
-function displayManimCode(slides) {
-    manimSlidesCount.textContent = slides.length;
+function showErrorInline(msg) { toast(msg, 'error'); }
 
-    manimSlidesContainer.innerHTML = '';
-    slides.forEach((slide) => {
-        const slideEl = document.createElement('div');
-        slideEl.className = 'slide-card manim-slide';
-        slideEl.innerHTML = `
-            <div class="slide-header">
-                <span class="slide-num">${slide.slide_id}</span>
-                <h4>${slide.title}</h4>
-                <span class="slide-type">${slide.class_name}</span>
-            </div>
-            <div class="slide-body">
-                <div class="code-container">
-                    <div class="code-header">
-                        <span>${slide.slide_id}.py</span>
-                        <button class="btn-copy-code" data-code="${encodeURIComponent(slide.code)}">Copy</button>
-                    </div>
-                    <pre class="code-block"><code>${escapeHtml(slide.code)}</code></pre>
-                </div>
-                <p class="slide-duration">Expected: ${slide.expected_duration}s</p>
-            </div>
-        `;
-        manimSlidesContainer.appendChild(slideEl);
-    });
-
-    // Add copy handlers for code blocks
-    document.querySelectorAll('.btn-copy-code').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            const code = decodeURIComponent(btn.dataset.code);
-            try {
-                await navigator.clipboard.writeText(code);
-                showToast('Code copied to clipboard!', 'success');
-            } catch (error) {
-                showToast('Failed to copy', 'error');
-            }
-        });
-    });
-}
-
-// Escape HTML for code display
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// New Upload - shared reset function
 function resetToUpload() {
-    // Reset state
-    selectedFile = null;
-    currentJobId = null;
-    fileInput.value = '';
-    workflowCancelled = false;
-    workflowStartTime = null;
-
-    // Reset UI
-    dropZone.classList.remove('hidden');
-    fileInfo.classList.add('hidden');
-    uploadBtn.disabled = true;
-    uploadBtn.textContent = 'Upload PDF';
-    processBtn.classList.remove('hidden');
-    processingSpinner.classList.add('hidden');
-
-    // Reset workflow steps
-    document.querySelectorAll('.workflow-step').forEach(step => {
-        step.classList.remove('active', 'completed', 'error');
-        const desc = step.querySelector('.step-description');
-        if (desc) {
-            const stepName = step.dataset.step;
-            const defaultDescs = {
-                'upload': 'Document uploaded',
-                'ocr': 'Extract text from PDF using Mistral',
-                'plan': 'Claude creates video presentation plan',
-                'videos': 'Kodisc creates animated slide videos',
-                'voiceovers': 'ElevenLabs creates audio narration',
-                'final': 'Shotstack combines everything'
-            };
-            desc.textContent = defaultDescs[stepName] || '';
-        }
-    });
-    if (beginWorkflowBtn) {
-        beginWorkflowBtn.classList.remove('hidden');
-    }
-    if (cancelWorkflowBtn) {
-        cancelWorkflowBtn.classList.add('hidden');
-    }
-    if (workflowCurrentTask) {
-        workflowCurrentTask.textContent = 'Ready to begin...';
-    }
-    if (workflowEta) {
-        workflowEta.textContent = '';
-    }
-    if (workflowStatus) {
-        workflowStatus.classList.remove('processing');
-    }
-    // Reset sticky state
-    if (workflowSection) {
-        workflowSection.classList.remove('sticky');
-    }
-    if (workflowSpacer) {
-        workflowSpacer.classList.remove('active');
-    }
-
-    // Hide all sections
-    resultsSection.classList.add('hidden');
-    processingSection.classList.add('hidden');
-    planSection.classList.add('hidden');
-    manimSection.classList.add('hidden');
-    voiceoverSection.classList.add('hidden');
-    if (finalVideoSection) finalVideoSection.classList.add('hidden');
-    if (workflowSection) workflowSection.classList.add('hidden');
-    uploadSection.classList.remove('hidden');
+  state.jobId = null;
+  state.job = null;
+  state.file = null;
+  state.running = false;
+  state.cancelRequested = false;
+  history.replaceState(null, '', location.pathname);
+  ['pipeline-section', 'plan-section', 'videos-section', 'final-section', 'error-box', 'file-info'].forEach((id) => hide($(id)));
+  ['ocr', 'plan', 'render', 'voice', 'assemble'].forEach((s) => setStep(s, null));
+  $('file-input').value = '';
+  $('start-btn').disabled = true;
+  show($('upload-section'));
+  loadRecentJobs();
 }
 
-// New Upload button in plan section
-newUploadBtn.addEventListener('click', resetToUpload);
-
-// New Upload button in results section
-newUploadBtnResults.addEventListener('click', resetToUpload);
-
-// Back to Plan button (from videos section)
-document.getElementById('back-to-plan-btn').addEventListener('click', async () => {
-    manimSection.classList.add('hidden');
-    planSection.classList.remove('hidden');
-    planContent.classList.remove('hidden');
-    planSpinner.classList.add('hidden');
-
-    // Check if videos already exist - if so, show "View Videos" button
-    manimBtn.disabled = false;
-    try {
-        const response = await fetch(`/api/kodisc/${currentJobId}/progress`);
-        if (response.ok) {
-            const data = await response.json();
-            if (data.status === 'complete' && data.results && data.results.length > 0) {
-                manimBtn.textContent = 'View Videos';
-            } else {
-                manimBtn.textContent = 'Generate Videos';
-            }
-        } else {
-            manimBtn.textContent = 'Generate Videos';
-        }
-    } catch (e) {
-        manimBtn.textContent = 'Generate Videos';
-    }
-});
-
-// Back to OCR Results button (from plan section)
-document.getElementById('back-to-results-btn').addEventListener('click', async () => {
-    planSection.classList.add('hidden');
-    resultsSection.classList.remove('hidden');
-
-    // Check if plan already exists - if so, show "View Plan" button
-    planBtn.disabled = false;
-    try {
-        const response = await fetch(`/api/plan/${currentJobId}`);
-        if (response.ok) {
-            const data = await response.json();
-            if (data.plan && data.plan.slides && data.plan.slides.length > 0) {
-                planBtn.textContent = 'View Plan';
-            } else {
-                planBtn.textContent = 'Generate Plan';
-            }
-        } else {
-            planBtn.textContent = 'Generate Plan';
-        }
-    } catch (e) {
-        planBtn.textContent = 'Generate Plan';
-    }
-});
-
-// Status Update
-function updateStatus(status) {
-    jobStatusEl.textContent = status.charAt(0).toUpperCase() + status.slice(1);
-    jobStatusEl.className = 'status-badge ' + status;
+function readPasscode() {
+  state.passcode = $('passcode-input').value.trim();
+  try { sessionStorage.setItem('p2v_passcode', state.passcode); } catch (_) { /* private mode */ }
 }
 
-// Toast Notification
-function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-
-    // Error toasts stay longer (8 seconds) so user can read them
-    const duration = type === 'error' ? 8000 : 3000;
-
-    setTimeout(() => {
-        toast.remove();
-    }, duration);
+// ---------------------------------------------------------------------------
+// Upload widget
+// ---------------------------------------------------------------------------
+function handleFile(file) {
+  if (!file) return;
+  if (!/\.pdf$/i.test(file.name)) { toast('Please choose a PDF', 'error'); return; }
+  const max = (state.config && state.config.max_upload_mb) || 25;
+  if (file.size > max * 1024 * 1024) { toast(`PDF is larger than ${max} MB`, 'error'); return; }
+  state.file = file;
+  $('file-name').textContent = `${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
+  show($('file-info'));
+  $('start-btn').disabled = false;
 }
 
-// ============================================
-// VOICEOVER GENERATION (ElevenLabs)
-// ============================================
-
-// Debug: Check if voiceover elements exist
-console.log('Voiceover button found:', !!voiceoverBtn);
-console.log('Voiceover section found:', !!voiceoverSection);
-
-// Generate Voiceovers button click handler
-if (voiceoverBtn) {
-    voiceoverBtn.addEventListener('click', async () => {
-        console.log('Voiceover button clicked!');
-
-        if (!currentJobId) {
-            console.error('No job ID found');
-            showToast('No job ID found. Please select or upload a PDF first.', 'error');
-            return;
-        }
-
-        console.log('=== Voiceover Generation via ElevenLabs ===');
-        console.log('Job ID:', currentJobId);
-
-        voiceoverBtn.disabled = true;
-        voiceoverBtn.textContent = 'Checking...';
-
-        try {
-            // First check if voiceovers already exist (cached)
-            console.log('Checking for cached voiceovers...');
-            const cacheResponse = await fetch(`/api/voiceover/${currentJobId}/progress`);
-
-            if (cacheResponse.ok) {
-                const cacheData = await cacheResponse.json();
-
-                // If we have cached results, show them directly
-                if (cacheData.status === 'complete' && cacheData.results && cacheData.results.length > 0) {
-                    console.log('Found cached voiceovers:', cacheData.results.length);
-                    displayVoiceoverResults(cacheData.results);
-
-                    voiceoverSection.classList.remove('hidden');
-                    voiceoverSpinner.classList.add('hidden');
-                    voiceoverContent.classList.remove('hidden');
-                    manimSection.classList.add('hidden');
-
-                    voiceoverSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-                    showToast(`Loaded ${cacheData.successful} cached voiceovers`, 'success');
-                    voiceoverBtn.disabled = false;
-                    voiceoverBtn.textContent = 'Generate Voiceovers';
-                    return;
-                }
-            }
-
-            // No cached voiceovers - start generation
-            console.log('No cached voiceovers found, starting generation...');
-
-            // Show voiceover section with spinner
-            voiceoverSection.classList.remove('hidden');
-            voiceoverSpinner.classList.remove('hidden');
-            voiceoverContent.classList.add('hidden');
-
-            // Scroll to voiceover section so user can see the spinner
-            voiceoverSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-            // Start background generation via ElevenLabs API
-            console.log('Calling API: POST /api/voiceover/' + currentJobId + '/start');
-            const response = await fetch(`/api/voiceover/${currentJobId}/start`, {
-                method: 'POST'
-            });
-
-            console.log('Response status:', response.status);
-
-            if (!response.ok) {
-                const error = await response.json();
-                console.error('API Error:', error);
-                throw new Error(error.detail || 'Failed to start voiceover generation');
-            }
-
-            const data = await response.json();
-            console.log('Generation started:', data);
-
-            // Poll for progress
-            voiceoverBtn.textContent = `Generating 0/${data.total_slides}...`;
-            await pollVoiceoverProgress(currentJobId, data.total_slides);
-
-        } catch (error) {
-            console.error('Voiceover generation failed:', error);
-            showToast(error.message, 'error');
-            voiceoverSpinner.classList.add('hidden');
-            voiceoverSection.classList.add('hidden');
-            voiceoverBtn.disabled = false;
-            voiceoverBtn.textContent = 'Generate Voiceovers';
-        }
-    });
-} else {
-    console.error('Voiceover button not found in DOM! Check if HTML is updated.');
+function wireUpload() {
+  const zone = $('drop-zone');
+  const input = $('file-input');
+  zone.addEventListener('click', (e) => { if (e.target.tagName !== 'LABEL') input.click(); });
+  input.addEventListener('change', () => handleFile(input.files[0]));
+  ['dragenter', 'dragover'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.add('dragover'); }));
+  ['dragleave', 'drop'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.remove('dragover'); }));
+  zone.addEventListener('drop', (e) => handleFile(e.dataTransfer.files[0]));
+  $('remove-file').addEventListener('click', () => { state.file = null; input.value = ''; hide($('file-info')); $('start-btn').disabled = true; });
+  $('start-btn').addEventListener('click', startFromUpload);
+  $('resume-btn').addEventListener('click', () => resumeJob($('resume-input').value));
+  $('resume-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') resumeJob($('resume-input').value); });
+  $('cancel-btn').addEventListener('click', () => { state.cancelRequested = true; setStatus('Pausing after the current step…', ''); });
+  $('resume-run-btn').addEventListener('click', () => runPipeline());
+  $('new-job-btn').addEventListener('click', resetToUpload);
+  $('new-job-btn-2').addEventListener('click', resetToUpload);
 }
 
-// Poll for Voiceover generation progress
-async function pollVoiceoverProgress(jobId, totalSlides) {
-    const pollInterval = 2000; // 2 seconds
-
-    while (true) {
-        try {
-            const response = await fetch(`/api/voiceover/${jobId}/progress`);
-            const progress = await response.json();
-
-            console.log('Progress:', progress);
-
-            // Update button with progress
-            voiceoverBtn.textContent = `Generating ${progress.completed_slides}/${totalSlides}...`;
-
-            // Update spinner text if it exists
-            const spinnerText = voiceoverSpinner.querySelector('p');
-            if (spinnerText) {
-                spinnerText.textContent = `Generating voiceover ${progress.current_slide}: ${progress.current_title || '...'}`;
-            }
-
-            if (progress.status === 'complete') {
-                // Generation complete - show results
-                displayVoiceoverResults(progress.results);
-                voiceoverSpinner.classList.add('hidden');
-                voiceoverContent.classList.remove('hidden');
-                manimSection.classList.add('hidden');
-
-                showToast(`Voiceovers generated! ${progress.successful} successful, ${progress.failed} failed`, 'success');
-                console.log('=== Voiceover Generation Complete ===');
-                voiceoverBtn.textContent = 'Generate Voiceovers';
-                voiceoverBtn.disabled = false;
-                return;
-            }
-
-            if (progress.status === 'error' || progress.status === 'cancelled') {
-                throw new Error(progress.error || `Generation ${progress.status}`);
-            }
-
-            // Wait before polling again
-            await new Promise(resolve => setTimeout(resolve, pollInterval));
-
-        } catch (error) {
-            console.error('Progress polling error:', error);
-            throw error;
-        }
-    }
+// ---------------------------------------------------------------------------
+// Gallery + recent jobs
+// ---------------------------------------------------------------------------
+function renderGallery(samples) {
+  if (!samples || !samples.length) return;
+  $('gallery').innerHTML = samples.map((s) => `
+    <div class="video-card">
+      <video controls preload="metadata" ${s.poster ? `poster="${esc(s.poster)}"` : ''}><source src="${esc(s.url)}" type="video/mp4"></video>
+      <h4>${esc(s.title || 'Sample')}</h4>
+    </div>`).join('');
+  show($('gallery-section'));
 }
 
-// Display Voiceover Results
-function displayVoiceoverResults(results) {
-    voiceoverSlidesCount.textContent = results.length;
-
-    voiceoverSlidesContainer.innerHTML = '';
-    results.forEach((slide) => {
-        const slideEl = document.createElement('div');
-        slideEl.className = 'slide-card voiceover-slide';
-
-        const statusBadge = slide.status === 'success'
-            ? '<span class="status-badge complete">✓ Audio Ready</span>'
-            : slide.status === 'skipped'
-                ? '<span class="status-badge skipped">⊘ Skipped</span>'
-                : `<span class="status-badge failed">✗ Failed</span>`;
-
-        const audioSection = slide.status === 'success' && slide.audio_url
-            ? `<div class="audio-container">
-                <audio controls style="width: 100%;">
-                    <source src="${slide.audio_url}" type="audio/mpeg">
-                    Your browser does not support audio playback.
-                </audio>
-                <div class="audio-info">
-                    <span class="audio-duration">${slide.audio_duration ? slide.audio_duration.toFixed(1) + 's' : ''}</span>
-                    <a href="${slide.audio_url}" target="_blank" class="btn-small">Open Audio</a>
-                    <button class="btn-small btn-copy-url" data-url="${slide.audio_url}">Copy URL</button>
-                </div>
-               </div>`
-            : slide.error
-                ? `<p class="error-msg">Error: ${slide.error}</p>`
-                : '';
-
-        slideEl.innerHTML = `
-            <div class="slide-header">
-                <span class="slide-num">${slide.slide_id}</span>
-                <h4>${slide.title}</h4>
-                ${statusBadge}
-            </div>
-            <div class="slide-body">
-                ${audioSection}
-            </div>
-        `;
-        voiceoverSlidesContainer.appendChild(slideEl);
-    });
-
-    // Add copy URL handlers
-    document.querySelectorAll('.btn-copy-url').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            const url = btn.dataset.url;
-            try {
-                await navigator.clipboard.writeText(url);
-                showToast('URL copied to clipboard!', 'success');
-            } catch (error) {
-                showToast('Failed to copy', 'error');
-            }
-        });
-    });
+async function loadRecentJobs() {
+  try {
+    const r = await api('/api/jobs');
+    const jobs = (r.jobs || []).slice(0, 8);
+    $('recent-jobs').innerHTML = jobs.length ? jobs.map((j) => `
+      <div class="job-card" data-id="${esc(j.id)}">
+        <span class="job-card-id">${esc(j.id)}</span>
+        <div class="job-card-info">
+          <div class="job-card-name">${esc(j.paper_title || j.filename)}</div>
+          <div class="job-card-status">
+            <span class="job-card-badge ${j.final_status === 'done' ? 'complete' : 'partial'}">${esc(j.final_status === 'done' ? 'complete' : j.step)}</span>
+            <span>${j.slides_rendered}/${j.slides_total} slides</span>
+          </div>
+        </div>
+        <span class="job-card-arrow">→</span>
+      </div>`).join('') : '<p class="hint">No jobs yet.</p>';
+    $('recent-jobs').querySelectorAll('.job-card').forEach((el) => el.addEventListener('click', () => resumeJob(el.dataset.id)));
+  } catch (_) { /* listing is optional */ }
 }
 
-// Back to Videos button (from voiceover section)
-const backToVideosBtn = document.getElementById('back-to-videos-btn');
-if (backToVideosBtn) {
-    backToVideosBtn.addEventListener('click', async () => {
-        voiceoverSection.classList.add('hidden');
-        manimSection.classList.remove('hidden');
-        manimContent.classList.remove('hidden');
-        manimSpinner.classList.add('hidden');
-
-        // Check if voiceovers already exist - if so, show "View Voiceovers" button
-        if (voiceoverBtn) voiceoverBtn.disabled = false;
-        try {
-            const response = await fetch(`/api/voiceover/${currentJobId}/progress`);
-            if (response.ok) {
-                const data = await response.json();
-                if (data.status === 'complete' && data.results && data.results.length > 0) {
-                    if (voiceoverBtn) voiceoverBtn.textContent = 'View Voiceovers';
-                } else {
-                    if (voiceoverBtn) voiceoverBtn.textContent = 'Generate Voiceovers';
-                }
-            } else {
-                if (voiceoverBtn) voiceoverBtn.textContent = 'Generate Voiceovers';
-            }
-        } catch (e) {
-            if (voiceoverBtn) voiceoverBtn.textContent = 'Generate Voiceovers';
-        }
-    });
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+async function init() {
+  wireUpload();
+  try { state.passcode = sessionStorage.getItem('p2v_passcode') || ''; } catch (_) { /* ignore */ }
+  $('passcode-input').value = state.passcode;
+  try {
+    state.config = await api('/api/config');
+    if (state.config.passcode_required) show($('passcode-row'));
+    renderGallery(state.config.samples);
+    const optional = new Set(['mistral_ocr_fallback']);
+    const missing = Object.entries(state.config.services || {}).filter(([k, v]) => v === false && !optional.has(k)).map(([k]) => k);
+    if (missing.length) toast(`Not configured yet: ${missing.join(', ')}`, 'error');
+  } catch (e) {
+    toast(`Cannot reach the API: ${e.message}`, 'error');
+  }
+  loadRecentJobs();
+  const jobId = new URLSearchParams(location.search).get('job');
+  if (jobId) resumeJob(jobId);
 }
 
-// New Upload button in voiceover section
-const newUploadBtnVoiceover = document.getElementById('new-upload-btn-voiceover');
-if (newUploadBtnVoiceover) {
-    newUploadBtnVoiceover.addEventListener('click', resetToUpload);
-}
-
-// Helper to check if voiceovers exist and update button
-async function checkVoiceoversExist() {
-    try {
-        const response = await fetch(`/api/voiceover/${currentJobId}/progress`);
-        if (response.ok) {
-            const data = await response.json();
-            if (data.status === 'complete' && data.results && data.results.length > 0) {
-                voiceoverBtn.textContent = 'View Voiceovers';
-            }
-        }
-    } catch (e) {
-        // Ignore errors
-    }
-}
-
-// Load jobs when the page loads
-// Page loaded - ready for upload
-
-// ============================================
-// FINAL VIDEO GENERATION (Shotstack)
-// ============================================
-
-// Generate Final Video button click handler
-if (finalVideoBtn) {
-    finalVideoBtn.addEventListener('click', async () => {
-        console.log('Final Video button clicked!');
-
-        if (!currentJobId) {
-            console.error('No job ID found');
-            showToast('No job ID found. Please select or upload a PDF first.', 'error');
-            return;
-        }
-
-        console.log('=== Final Video Generation via Shotstack ===');
-        console.log('Job ID:', currentJobId);
-
-        finalVideoBtn.disabled = true;
-        finalVideoBtn.textContent = 'Checking...';
-
-        try {
-            // First check if final video already exists (cached)
-            console.log('Checking for cached final video...');
-            const cacheResponse = await fetch(`/api/shotstack/${currentJobId}/progress`);
-
-            if (cacheResponse.ok) {
-                const cacheData = await cacheResponse.json();
-
-                // If we have cached results, show them directly
-                if (cacheData.status === 'complete' && cacheData.video_url) {
-                    console.log('Found cached final video:', cacheData.video_url);
-                    displayFinalVideo(cacheData.video_url);
-
-                    finalVideoSection.classList.remove('hidden');
-                    finalVideoSpinner.classList.add('hidden');
-                    finalVideoContent.classList.remove('hidden');
-                    voiceoverSection.classList.add('hidden');
-
-                    finalVideoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-                    showToast('Loaded cached final video', 'success');
-                    finalVideoBtn.disabled = false;
-                    finalVideoBtn.textContent = 'Generate Final Video';
-                    return;
-                }
-            }
-
-            // No cached video - start generation
-            console.log('No cached final video found, starting generation...');
-
-            // Show final video section with spinner
-            finalVideoSection.classList.remove('hidden');
-            finalVideoSpinner.classList.remove('hidden');
-            finalVideoContent.classList.add('hidden');
-
-            // Scroll to final video section so user can see the spinner
-            finalVideoSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-            // Start background generation via Shotstack API
-            console.log('Calling API: POST /api/shotstack/' + currentJobId + '/render');
-            const response = await fetch(`/api/shotstack/${currentJobId}/render`, {
-                method: 'POST'
-            });
-
-            console.log('Response status:', response.status);
-
-            if (!response.ok) {
-                const error = await response.json();
-                console.error('API Error:', error);
-                throw new Error(error.detail || 'Failed to start final video rendering');
-            }
-
-            const data = await response.json();
-            console.log('Rendering started:', data);
-
-            // Poll for progress
-            finalVideoBtn.textContent = 'Rendering...';
-            await pollFinalVideoProgress(currentJobId);
-
-        } catch (error) {
-            console.error('Final video generation failed:', error);
-            showToast(error.message, 'error');
-            finalVideoSpinner.classList.add('hidden');
-            finalVideoSection.classList.add('hidden');
-            finalVideoBtn.disabled = false;
-            finalVideoBtn.textContent = 'Generate Final Video';
-        }
-    });
-} else {
-    console.error('Final Video button not found in DOM!');
-}
-
-// Poll for Final Video rendering progress
-async function pollFinalVideoProgress(jobId) {
-    const pollInterval = 5000; // 5 seconds (Shotstack rendering takes time)
-
-    while (true) {
-        try {
-            const response = await fetch(`/api/shotstack/${jobId}/progress`);
-            const progress = await response.json();
-
-            console.log('Progress:', progress);
-
-            // Update spinner text
-            const spinnerText = finalVideoSpinner.querySelector('p');
-            if (spinnerText) {
-                const statusText = progress.shotstack_status || progress.status || 'processing';
-                spinnerText.textContent = `Rendering final video... Status: ${statusText}`;
-            }
-
-            if (progress.status === 'complete' && progress.video_url) {
-                // Generation complete - show results
-                displayFinalVideo(progress.video_url);
-                finalVideoSpinner.classList.add('hidden');
-                finalVideoContent.classList.remove('hidden');
-                voiceoverSection.classList.add('hidden');
-
-                showToast('Final video rendered successfully!', 'success');
-                console.log('=== Final Video Generation Complete ===');
-                finalVideoBtn.textContent = 'Generate Final Video';
-                finalVideoBtn.disabled = false;
-                return;
-            }
-
-            if (progress.status === 'failed' || progress.status === 'error') {
-                throw new Error(progress.error || 'Final video rendering failed');
-            }
-
-            // Wait before polling again
-            await new Promise(resolve => setTimeout(resolve, pollInterval));
-
-        } catch (error) {
-            console.error('Progress polling error:', error);
-            throw error;
-        }
-    }
-}
-
-// Display Final Video
-function displayFinalVideo(videoUrl) {
-    finalVideoPlayer.src = videoUrl;
-    downloadFinalVideoBtn.href = videoUrl;
-    downloadFinalVideoBtn.download = 'final-video.mp4';
-}
-
-// Back to Voiceovers button (from final video section)
-const backToVoiceoversBtn = document.getElementById('back-to-voiceovers-btn');
-if (backToVoiceoversBtn) {
-    backToVoiceoversBtn.addEventListener('click', async () => {
-        finalVideoSection.classList.add('hidden');
-        voiceoverSection.classList.remove('hidden');
-        voiceoverContent.classList.remove('hidden');
-        voiceoverSpinner.classList.add('hidden');
-
-        // Check if final video already exists - if so, show "View Final Video" button
-        if (finalVideoBtn) finalVideoBtn.disabled = false;
-        try {
-            const response = await fetch(`/api/shotstack/${currentJobId}/progress`);
-            if (response.ok) {
-                const data = await response.json();
-                if (data.status === 'complete' && data.video_url) {
-                    if (finalVideoBtn) finalVideoBtn.textContent = 'View Final Video';
-                } else {
-                    if (finalVideoBtn) finalVideoBtn.textContent = 'Generate Final Video';
-                }
-            } else {
-                if (finalVideoBtn) finalVideoBtn.textContent = 'Generate Final Video';
-            }
-        } catch (e) {
-            if (finalVideoBtn) finalVideoBtn.textContent = 'Generate Final Video';
-        }
-    });
-}
-
-// New Upload button in final video section
-const newUploadBtnFinal = document.getElementById('new-upload-btn-final');
-if (newUploadBtnFinal) {
-    newUploadBtnFinal.addEventListener('click', resetToUpload);
-}
+document.addEventListener('DOMContentLoaded', init);

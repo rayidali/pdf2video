@@ -9,3 +9,14 @@ venv/
 media/
 *.mp4
 *.mp3
+.vercel/
+*.db
+.pytest_cache/
+.env.local
+.vercel
+.env*
+
+# Installed by `vercel integration add` (Neon agent skills); not part of the app
+.agents/
+.claude/skills/
+skills-lock.json

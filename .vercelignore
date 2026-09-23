@@ -1,0 +1,11 @@
+tests/
+docs/
+.github/
+.venv/
+venv/
+*.db
+*.pdf
+*.mp4
+*.mp3
+uploads/
+outputs/

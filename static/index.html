@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Paper to Video</title>
+    <meta name="description" content="Turn a research paper PDF into a narrated, animated explainer video.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -16,30 +17,40 @@
                 <div class="logo-icon">P2V</div>
                 <div class="logo-text">
                     <h1>Paper to Video</h1>
-                    <p>Transform research papers into explainer videos</p>
+                    <p>Drop in a research paper. Get a narrated, animated explainer.</p>
                 </div>
             </div>
         </header>
 
         <main>
-            <!-- Upload Section -->
+            <!-- Sample gallery (from SAMPLE_VIDEOS) -->
+            <section id="gallery-section" class="card hidden">
+                <div class="card-header">
+                    <div class="card-dots"><span class="card-dot"></span><span class="card-dot"></span></div>
+                    <span class="card-title">samples/</span>
+                </div>
+                <div class="card-body">
+                    <h2>Sample outputs</h2>
+                    <p class="hint">Videos this pipeline produced from real papers. Upload your own below.</p>
+                    <div id="gallery" class="gallery-grid"></div>
+                </div>
+            </section>
+
+            <!-- Upload -->
             <section id="upload-section" class="card">
                 <div class="card-header">
-                    <div class="card-dots">
-                        <span class="card-dot"></span>
-                        <span class="card-dot"></span>
-                    </div>
+                    <div class="card-dots"><span class="card-dot"></span><span class="card-dot"></span></div>
                     <span class="card-title">upload.pdf</span>
                 </div>
                 <div class="card-body">
-                    <h2>Upload Your PDF</h2>
+                    <h2>Upload a paper</h2>
                     <div id="drop-zone" class="drop-zone">
                         <div class="drop-zone-content">
                             <span class="drop-icon">+</span>
-                            <p>Drag & drop your PDF here</p>
+                            <p>Drag &amp; drop a PDF here</p>
                             <p class="or-text">or</p>
-                            <label for="file-input" class="btn">Browse Files</label>
-                            <input type="file" id="file-input" accept=".pdf" hidden>
+                            <label for="file-input" class="btn">Browse files</label>
+                            <input type="file" id="file-input" accept=".pdf,application/pdf" hidden>
                         </div>
                     </div>
                     <div id="file-info" class="file-info hidden">
@@ -47,263 +58,119 @@
                         <span id="file-name"></span>
                         <button id="remove-file" class="btn-icon" title="Remove">×</button>
                     </div>
-                    <button id="upload-btn" class="btn btn-dark btn-full" disabled>Upload PDF</button>
+                    <div id="passcode-row" class="passcode-row hidden">
+                        <label for="passcode-input"><strong>Passcode</strong></label>
+                        <input id="passcode-input" type="password" autocomplete="off" placeholder="Required to run the pipeline">
+                    </div>
+                    <p class="hint">A full run takes 10 to 25 minutes and calls five paid APIs. Keep this tab open, or come back later with the job id.</p>
+                    <button id="start-btn" class="btn btn-dark btn-full" disabled>Upload &amp; start</button>
+
+                    <div class="resume-row">
+                        <h3>Resume a job</h3>
+                        <div class="resume-controls">
+                            <input id="resume-input" type="text" placeholder="job id, e.g. 3f9a1c2e" maxlength="8">
+                            <button id="resume-btn" class="btn">Resume</button>
+                        </div>
+                        <div id="recent-jobs" class="jobs-list"></div>
+                    </div>
                 </div>
             </section>
 
-            <!-- Workflow Progress Section -->
-            <section id="workflow-section" class="card hidden">
+            <!-- Pipeline progress -->
+            <section id="pipeline-section" class="card hidden">
                 <div class="card-header">
-                    <div class="card-dots">
-                        <span class="card-dot"></span>
-                        <span class="card-dot"></span>
-                    </div>
-                    <span class="card-title">workflow.progress</span>
+                    <div class="card-dots"><span class="card-dot"></span><span class="card-dot"></span></div>
+                    <span class="card-title">job <span id="job-id-label"></span></span>
                 </div>
                 <div class="card-body">
-                    <h2>Automated Workflow</h2>
+                    <h2>Pipeline</h2>
                     <div class="workflow-progress">
-                        <div class="workflow-step" data-step="upload">
-                            <div class="step-indicator">
-                                <span class="step-number">1</span>
-                                <span class="step-status"></span>
-                            </div>
-                            <div class="step-details">
-                                <h4>Upload PDF</h4>
-                                <p class="step-description">Document uploaded</p>
-                            </div>
-                        </div>
                         <div class="workflow-step" data-step="ocr">
-                            <div class="step-indicator">
-                                <span class="step-number">2</span>
-                                <span class="step-status"></span>
-                            </div>
-                            <div class="step-details">
-                                <h4>OCR Processing</h4>
-                                <p class="step-description">Extract text from PDF using Mistral</p>
-                            </div>
+                            <div class="step-indicator"><span class="step-number">1</span><span class="step-status"></span></div>
+                            <div class="step-details"><h4>Extract text</h4><p class="step-description">Text is pulled from the PDF (OCR only if scanned)</p></div>
                         </div>
                         <div class="workflow-step" data-step="plan">
-                            <div class="step-indicator">
-                                <span class="step-number">3</span>
-                                <span class="step-status"></span>
-                            </div>
-                            <div class="step-details">
-                                <h4>Generate Plan</h4>
-                                <p class="step-description">Claude creates video presentation plan</p>
-                            </div>
+                            <div class="step-indicator"><span class="step-number">2</span><span class="step-status"></span></div>
+                            <div class="step-details"><h4>Plan the video</h4><p class="step-description">Claude writes an 11-slide script</p></div>
                         </div>
-                        <div class="workflow-step" data-step="videos">
-                            <div class="step-indicator">
-                                <span class="step-number">4</span>
-                                <span class="step-status"></span>
-                            </div>
-                            <div class="step-details">
-                                <h4>Generate Videos</h4>
-                                <p class="step-description">Kodisc creates animated slide videos</p>
-                            </div>
+                        <div class="workflow-step" data-step="render">
+                            <div class="step-indicator"><span class="step-number">3</span><span class="step-status"></span></div>
+                            <div class="step-details"><h4>Animate slides</h4><p class="step-description">Claude writes Manim, Kodisc renders it</p></div>
                         </div>
-                        <div class="workflow-step" data-step="voiceovers">
-                            <div class="step-indicator">
-                                <span class="step-number">5</span>
-                                <span class="step-status"></span>
-                            </div>
-                            <div class="step-details">
-                                <h4>Generate Voiceovers</h4>
-                                <p class="step-description">ElevenLabs creates audio narration</p>
-                            </div>
+                        <div class="workflow-step" data-step="voice">
+                            <div class="step-indicator"><span class="step-number">4</span><span class="step-status"></span></div>
+                            <div class="step-details"><h4>Narrate</h4><p class="step-description">ElevenLabs voices each slide</p></div>
                         </div>
-                        <div class="workflow-step" data-step="final">
-                            <div class="step-indicator">
-                                <span class="step-number">6</span>
-                                <span class="step-status"></span>
-                            </div>
-                            <div class="step-details">
-                                <h4>Final Video</h4>
-                                <p class="step-description">Shotstack combines everything</p>
-                            </div>
+                        <div class="workflow-step" data-step="assemble">
+                            <div class="step-indicator"><span class="step-number">5</span><span class="step-status"></span></div>
+                            <div class="step-details"><h4>Assemble</h4><p class="step-description">Shotstack stitches video and audio</p></div>
                         </div>
                     </div>
-                    <div id="workflow-status" class="workflow-status">
-                        <div class="workflow-spinner"></div>
+                    <div id="pipeline-status" class="workflow-status">
+                        <div id="status-spinner" class="workflow-spinner"></div>
                         <div class="workflow-text">
-                            <p id="workflow-current-task">Ready to begin...</p>
-                            <p id="workflow-eta"></p>
+                            <p id="status-text">Ready.</p>
+                            <p id="eta-text"></p>
                         </div>
                     </div>
-                    <button id="begin-workflow-btn" class="btn btn-dark btn-full">Begin Workflow</button>
-                    <button id="cancel-workflow-btn" class="btn btn-full hidden">Cancel Workflow</button>
-                </div>
-            </section>
-
-            <!-- Spacer for sticky workflow -->
-            <div id="workflow-spacer" class="workflow-spacer"></div>
-
-            <!-- Processing Section -->
-            <section id="processing-section" class="card hidden">
-                <div class="card-header">
-                    <div class="card-dots">
-                        <span class="card-dot"></span>
-                        <span class="card-dot"></span>
-                    </div>
-                    <span class="card-title">process.ocr</span>
-                </div>
-                <div class="card-body">
-                    <h2>Process Document</h2>
-                    <div class="job-info">
-                        <p>Job ID: <code id="job-id"></code></p>
-                        <p>Status: <span id="job-status" class="status-badge">Uploaded</span></p>
-                    </div>
-                    <button id="process-btn" class="btn btn-dark btn-full">Extract Text with OCR</button>
-                    <div id="processing-spinner" class="spinner hidden">
-                        <div class="spinner-circle"></div>
-                        <p>Processing... This may take a minute.</p>
+                    <div id="error-box" class="error-box hidden"></div>
+                    <div class="btn-row">
+                        <button id="cancel-btn" class="btn hidden">Pause</button>
+                        <button id="resume-run-btn" class="btn btn-dark hidden">Resume</button>
+                        <button id="new-job-btn" class="btn hidden">Start another paper</button>
                     </div>
                 </div>
             </section>
 
-            <!-- Results Section -->
-            <section id="results-section" class="card hidden">
-                <div class="card-header">
-                    <div class="card-dots">
-                        <span class="card-dot"></span>
-                        <span class="card-dot"></span>
-                    </div>
-                    <span class="card-title">output.md</span>
-                </div>
-                <div class="card-body">
-                    <h2>Extracted Content</h2>
-                    <div class="tabs">
-                        <button class="tab-btn active" data-tab="preview">Preview</button>
-                        <button class="tab-btn" data-tab="raw">Raw Markdown</button>
-                    </div>
-                    <div id="preview-tab" class="tab-content active">
-                        <div id="markdown-preview" class="markdown-preview"></div>
-                    </div>
-                    <div id="raw-tab" class="tab-content hidden">
-                        <pre id="markdown-raw" class="markdown-raw"></pre>
-                    </div>
-                    <div class="results-actions">
-                        <button id="copy-btn" class="btn">Copy Markdown</button>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Planning Section -->
+            <!-- Plan -->
             <section id="plan-section" class="card hidden">
                 <div class="card-header">
-                    <div class="card-dots">
-                        <span class="card-dot"></span>
-                        <span class="card-dot"></span>
-                    </div>
+                    <div class="card-dots"><span class="card-dot"></span><span class="card-dot"></span></div>
                     <span class="card-title">plan.json</span>
                 </div>
                 <div class="card-body">
-                    <h2>Presentation Plan</h2>
-                    <div id="plan-spinner" class="spinner hidden">
-                        <div class="spinner-circle"></div>
-                        <p>Claude is planning your video... This may take a moment.</p>
+                    <div class="plan-header">
+                        <h3 id="plan-title"></h3>
+                        <p id="plan-summary"></p>
+                        <p class="plan-meta"><span id="plan-slides-count"></span> slides</p>
                     </div>
-                    <div id="plan-content" class="hidden">
-                        <div class="plan-header">
-                            <h3 id="plan-title"></h3>
-                            <p id="plan-summary"></p>
-                            <p class="plan-meta"><span id="plan-duration"></span> min • <span id="plan-slides-count"></span> slides</p>
-                        </div>
-                        <div id="slides-container" class="slides-container"></div>
-                        <div class="tabs">
-                            <button class="tab-btn" data-tab="plan-json">Raw JSON</button>
-                        </div>
-                        <div id="plan-json-tab" class="tab-content hidden">
-                            <pre id="plan-json" class="markdown-raw"></pre>
-                        </div>
-                        <div class="results-actions">
-                            <button id="copy-plan-btn" class="btn">Copy JSON</button>
-                        </div>
-                    </div>
+                    <div id="plan-slides" class="slides-container"></div>
                 </div>
             </section>
 
-            <!-- Videos Section -->
-            <section id="manim-section" class="card hidden">
+            <!-- Slide videos -->
+            <section id="videos-section" class="card hidden">
                 <div class="card-header">
-                    <div class="card-dots">
-                        <span class="card-dot"></span>
-                        <span class="card-dot"></span>
-                    </div>
-                    <span class="card-title">videos/*.mp4</span>
+                    <div class="card-dots"><span class="card-dot"></span><span class="card-dot"></span></div>
+                    <span class="card-title">slides/*.mp4</span>
                 </div>
                 <div class="card-body">
-                    <h2>Generated Videos</h2>
-                    <div id="manim-spinner" class="spinner hidden">
-                        <div class="spinner-circle"></div>
-                        <p>Generating videos via Kodisc... This may take a few minutes.</p>
-                    </div>
-                    <div id="manim-content" class="hidden">
-                        <div class="manim-header">
-                            <p>Generated <span id="manim-slides-count"></span> video clips</p>
-                        </div>
-                        <div id="manim-slides-container" class="slides-container"></div>
-                    </div>
+                    <h2>Slide animations</h2>
+                    <div id="video-grid" class="video-grid"></div>
                 </div>
             </section>
 
-            <!-- Voiceover Section -->
-            <section id="voiceover-section" class="card hidden">
+            <!-- Final video -->
+            <section id="final-section" class="card hidden">
                 <div class="card-header">
-                    <div class="card-dots">
-                        <span class="card-dot"></span>
-                        <span class="card-dot"></span>
-                    </div>
-                    <span class="card-title">audio/*.mp3</span>
+                    <div class="card-dots"><span class="card-dot"></span><span class="card-dot"></span></div>
+                    <span class="card-title">final.mp4</span>
                 </div>
                 <div class="card-body">
-                    <h2>Generated Voiceovers</h2>
-                    <div id="voiceover-spinner" class="spinner hidden">
-                        <div class="spinner-circle"></div>
-                        <p>Generating voiceovers via ElevenLabs... This may take a few minutes.</p>
+                    <h2>Final video</h2>
+                    <div class="final-video-container" style="text-align:center;margin:16px 0;">
+                        <video id="final-player" controls style="max-width:100%;border-radius:8px;background:#000;"></video>
                     </div>
-                    <div id="voiceover-content" class="hidden">
-                        <div class="voiceover-header">
-                            <p>Generated <span id="voiceover-slides-count"></span> audio clips</p>
-                        </div>
-                        <div id="voiceover-slides-container" class="slides-container"></div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Final Video Section -->
-            <section id="final-video-section" class="card hidden">
-                <div class="card-header">
-                    <div class="card-dots">
-                        <span class="card-dot"></span>
-                        <span class="card-dot"></span>
-                    </div>
-                    <span class="card-title">final-video.mp4</span>
-                </div>
-                <div class="card-body">
-                    <h2>Final Video</h2>
-                    <div id="final-video-spinner" class="spinner hidden">
-                        <div class="spinner-circle"></div>
-                        <p>Rendering final video via Shotstack... This may take a few minutes.</p>
-                    </div>
-                    <div id="final-video-content" class="hidden">
-                        <div class="final-video-container" style="text-align: center; margin: 20px 0;">
-                            <video id="final-video-player" controls style="max-width: 100%; border-radius: 8px;">
-                                Your browser does not support the video tag.
-                            </video>
-                        </div>
-                        <div class="results-actions">
-                            <a id="download-final-video-btn" class="btn btn-dark" download>Download Video</a>
-                            <button id="new-upload-btn-final" class="btn">New Upload</button>
-                        </div>
+                    <div class="results-actions">
+                        <a id="download-btn" class="btn btn-dark" download target="_blank" rel="noopener">Download video</a>
+                        <button id="new-job-btn-2" class="btn">Start another paper</button>
                     </div>
                 </div>
             </section>
         </main>
 
         <footer>
-            <p>FastAPI + Mistral OCR + Claude AI + Manim</p>
+            <p>FastAPI on Vercel · Mistral OCR · Claude · Manim via Kodisc · ElevenLabs · Shotstack</p>
         </footer>
     </div>
 

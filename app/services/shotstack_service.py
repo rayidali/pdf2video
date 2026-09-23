@@ -1,134 +1,36 @@
 """
-Shotstack Video Editing API Service
+Shotstack: stitch slide videos and voiceovers into one mp4.
 
-Combines multiple video clips with audio voiceovers into a single final video.
-Uses freeze-frame technique to extend short clips to match longer voiceovers.
+Each video clip's length is set to its voiceover duration. When that is longer than the
+clip itself, Shotstack holds the last frame, so the generated scenes must end on their
+final composed frame (never a fade-out). No local trimming, no ffmpeg.
 
-API Docs: https://shotstack.io/docs/api/
-Pricing: https://shotstack.io/pricing/
+submit_render() and check_render_status() are each one HTTP call, suitable for serverless.
 """
+import logging
+from dataclasses import dataclass
+from typing import List, Optional
 
 import httpx
-import asyncio
-import logging
-import subprocess
-import tempfile
-import os
-from pathlib import Path
-from typing import Optional, List
-from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-
-def get_video_duration(video_url: str) -> Optional[float]:
-    """
-    Get video duration in seconds using ffprobe.
-
-    Args:
-        video_url: URL to the video file
-
-    Returns:
-        Duration in seconds, or None if unable to determine
-    """
-    try:
-        result = subprocess.run(
-            [
-                "ffprobe",
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                video_url
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            duration = float(result.stdout.strip())
-            logger.debug(f"Video duration for {video_url}: {duration}s")
-            return duration
-    except Exception as e:
-        logger.warning(f"Could not get video duration for {video_url}: {e}")
-    return None
-
-
-def trim_video_end(video_url: str, output_path: Path, trim_seconds: float = 2.5) -> Optional[str]:
-    """
-    Download and trim the last N seconds from a video using ffmpeg.
-
-    Args:
-        video_url: URL to the source video
-        output_path: Path to save the trimmed video
-        trim_seconds: Seconds to trim from the end
-
-    Returns:
-        Path to trimmed video, or None if failed
-    """
-    try:
-        # Get video duration
-        duration = get_video_duration(video_url)
-        if not duration:
-            logger.error(f"Could not get duration for {video_url}")
-            return None
-
-        # Calculate new duration (remove last N seconds)
-        new_duration = duration - trim_seconds
-        if new_duration <= 0:
-            logger.error(f"Video too short to trim {trim_seconds}s from {duration}s video")
-            return None
-
-        # Ensure output directory exists
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Use ffmpeg to trim: -t specifies output duration from start
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",  # Overwrite output
-                "-i", video_url,
-                "-t", str(new_duration),  # Output duration (keeps first N seconds)
-                "-c", "copy",  # Copy codecs (fast, no re-encoding)
-                str(output_path)
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
-
-        if result.returncode == 0 and output_path.exists():
-            logger.info(f"Trimmed video: {duration:.1f}s -> {new_duration:.1f}s, saved to {output_path}")
-            return str(output_path)
-        else:
-            logger.error(f"ffmpeg failed: {result.stderr}")
-            return None
-
-    except Exception as e:
-        logger.error(f"Error trimming video: {e}")
-        return None
-
-# Shotstack API endpoints
 SHOTSTACK_STAGE_URL = "https://api.shotstack.io/stage"
 SHOTSTACK_PROD_URL = "https://api.shotstack.io/v1"
-
-# Polling configuration
-POLL_INTERVAL_SECONDS = 5
-MAX_POLL_ATTEMPTS = 120  # 10 minutes max wait
 
 
 @dataclass
 class SlideAsset:
-    """Video and audio assets for a single slide."""
     slide_number: int
     video_url: str
     audio_url: Optional[str] = None
-    audio_duration: Optional[float] = None  # seconds
+    audio_duration: Optional[float] = None
+    fallback_duration: float = 8.0   # used when there is no voiceover
     title: Optional[str] = None
 
 
 @dataclass
 class ShotstackResult:
-    """Result from Shotstack render."""
     success: bool
     video_url: Optional[str] = None
     render_id: Optional[str] = None
@@ -137,327 +39,79 @@ class ShotstackResult:
 
 
 class ShotstackService:
-    """
-    Service to combine video clips + audio into final video using Shotstack API.
-
-    Features:
-    - Sequences multiple video clips on a timeline
-    - Overlays voiceover audio for each clip
-    - Uses freeze-frame (extends clip length beyond video duration)
-    - Adds smooth transitions between clips
-    """
-
     def __init__(self, api_key: str, env: str = "stage"):
-        """
-        Initialize Shotstack service.
-
-        Args:
-            api_key: Shotstack API key
-            env: "stage" for sandbox (free), "v1" for production
-        """
         self.api_key = api_key
-        self.base_url = SHOTSTACK_STAGE_URL if env == "stage" else SHOTSTACK_PROD_URL
+        self.env = env
+        self.base_url = SHOTSTACK_PROD_URL if env == "v1" else SHOTSTACK_STAGE_URL
 
     def is_configured(self) -> bool:
-        """Check if service is configured."""
         return bool(self.api_key)
 
-    def _build_timeline(
-        self,
-        slides: List[SlideAsset],
-        min_clip_duration: float = 5.0
-    ) -> dict:
-        """
-        Build Shotstack timeline JSON from slide assets.
-
-        Uses freeze-frame technique:
-        - Videos should be pre-trimmed (fade-to-black removed) before calling this
-        - Set clip length to audio duration
-        - Shotstack freezes the last visible frame until clip ends
-
-        Args:
-            slides: List of SlideAsset with video/audio URLs (videos should be pre-trimmed)
-            min_clip_duration: Minimum clip duration if no audio
-
-        Returns:
-            Timeline dict for Shotstack API
-        """
-        video_clips = []
-        audio_clips = []
-        current_time = 0.0
-
-        for slide in slides:
-            # Determine clip duration:
-            # - If audio exists, use audio_duration (freeze last frame to fill time)
-            # - Otherwise use minimum duration
-            clip_duration = slide.audio_duration if slide.audio_duration else min_clip_duration
-
-            # Video clip - videos are pre-trimmed, just set length to audio duration
-            # Shotstack will play the video then freeze the last frame until clip ends
-            video_clip = {
-                "asset": {
-                    "type": "video",
-                    "src": slide.video_url,
-                    "volume": 0  # Mute original video audio
-                },
-                "start": current_time,
-                "length": clip_duration  # Audio duration - freezes last frame to fill
-            }
-            video_clips.append(video_clip)
-            logger.info(f"Slide {slide.slide_number}: clip_duration={clip_duration:.1f}s")
-
-            # Audio clip (on separate track - top layer)
-            if slide.audio_url and slide.audio_duration:
-                audio_clip = {
-                    "asset": {
-                        "type": "audio",
-                        "src": slide.audio_url,
-                        "volume": 1.0
-                    },
-                    "start": current_time,
-                    "length": slide.audio_duration
-                }
-                audio_clips.append(audio_clip)
-
-            current_time += clip_duration
-
-        # Build timeline with tracks
-        # Tracks are layered: first track is on top
+    @staticmethod
+    def build_timeline(slides: List[SlideAsset]) -> dict:
+        video_clips, audio_clips = [], []
+        t = 0.0
+        for s in sorted(slides, key=lambda x: x.slide_number):
+            length = s.audio_duration if (s.audio_url and s.audio_duration) else s.fallback_duration
+            length = round(max(length, 1.0), 3)
+            video_clips.append({
+                "asset": {"type": "video", "src": s.video_url, "volume": 0},
+                "start": round(t, 3),
+                "length": length,
+            })
+            if s.audio_url and s.audio_duration:
+                audio_clips.append({
+                    "asset": {"type": "audio", "src": s.audio_url, "volume": 1.0},
+                    "start": round(t, 3),
+                    "length": round(s.audio_duration, 3),
+                })
+            t += length
         tracks = []
-
-        # Audio track (top - so it's heard)
         if audio_clips:
             tracks.append({"clips": audio_clips})
-
-        # Video track (bottom)
         tracks.append({"clips": video_clips})
+        return {"background": "#000000", "tracks": tracks}
 
-        timeline = {
-            "background": "#000000",
-            "tracks": tracks
-        }
-
-        return timeline
-
-    def _build_edit(
-        self,
-        slides: List[SlideAsset],
-        resolution: str = "hd",
-        fps: int = 25,
-        format: str = "mp4"
-    ) -> dict:
-        """
-        Build complete Shotstack edit JSON.
-
-        Args:
-            slides: List of SlideAsset
-            resolution: "sd" (576p), "hd" (720p), "1080" (1080p)
-            fps: Frames per second (25 default)
-            format: Output format ("mp4", "gif", "webm")
-
-        Returns:
-            Complete edit dict for Shotstack API
-        """
-        timeline = self._build_timeline(slides)
-
-        edit = {
-            "timeline": timeline,
-            "output": {
-                "format": format,
-                "resolution": resolution,
-                "fps": fps
-            }
-        }
-
-        return edit
+    def build_edit(self, slides: List[SlideAsset], resolution: str = "hd", fps: int = 25) -> dict:
+        return {"timeline": self.build_timeline(slides), "output": {"format": "mp4", "resolution": resolution, "fps": fps}}
 
     async def submit_render(self, slides: List[SlideAsset]) -> ShotstackResult:
-        """
-        Submit video edit to Shotstack for rendering.
-
-        Args:
-            slides: List of SlideAsset with video/audio URLs
-
-        Returns:
-            ShotstackResult with render_id for polling
-        """
         if not self.is_configured():
-            return ShotstackResult(
-                success=False,
-                error="Shotstack API key not configured"
-            )
-
+            return ShotstackResult(success=False, error="Shotstack API key not configured")
         if not slides:
-            return ShotstackResult(
-                success=False,
-                error="No slides provided"
-            )
-
-        edit = self._build_edit(slides)
-
-        logger.info(f"[Shotstack] Submitting render with {len(slides)} clips...")
-        logger.debug(f"[Shotstack] Edit JSON: {edit}")
-
+            return ShotstackResult(success=False, error="No slides provided")
+        edit = self.build_edit(slides)
+        logger.info(f"[Shotstack] submitting {len(slides)} clips to {self.env}")
         try:
             async with httpx.AsyncClient(timeout=60) as client:
                 response = await client.post(
-                    f"{self.base_url}/render",
-                    json=edit,
-                    headers={
-                        "x-api-key": self.api_key,
-                        "Content-Type": "application/json"
-                    }
+                    f"{self.base_url}/render", json=edit,
+                    headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
                 )
-
-                if response.status_code != 201:
-                    error_text = response.text
-                    logger.error(f"[Shotstack] Submit failed: {response.status_code} - {error_text}")
-                    return ShotstackResult(
-                        success=False,
-                        error=f"API error {response.status_code}: {error_text}"
-                    )
-
-                data = response.json()
-                render_id = data.get("response", {}).get("id")
-
-                if not render_id:
-                    return ShotstackResult(
-                        success=False,
-                        error="No render ID in response"
-                    )
-
-                logger.info(f"[Shotstack] Render submitted: {render_id}")
-
-                return ShotstackResult(
-                    success=True,
-                    render_id=render_id,
-                    status="queued"
-                )
-
-        except httpx.TimeoutException:
-            logger.error("[Shotstack] Request timeout")
-            return ShotstackResult(success=False, error="Request timeout")
-        except Exception as e:
-            logger.error(f"[Shotstack] Error: {e}")
-            return ShotstackResult(success=False, error=str(e))
+        except httpx.HTTPError as e:
+            return ShotstackResult(success=False, error=f"Shotstack network error: {e}")
+        if response.status_code != 201:
+            logger.error(f"[Shotstack] submit HTTP {response.status_code}: {response.text[:300]}")
+            return ShotstackResult(success=False, error=f"Shotstack error {response.status_code}: {response.text[:300]}")
+        render_id = (response.json().get("response") or {}).get("id")
+        if not render_id:
+            return ShotstackResult(success=False, error="No render id in Shotstack response")
+        return ShotstackResult(success=True, render_id=render_id, status="queued")
 
     async def check_render_status(self, render_id: str) -> ShotstackResult:
-        """
-        Check the status of a render job.
-
-        Args:
-            render_id: The render ID from submit_render
-
-        Returns:
-            ShotstackResult with status and video_url if complete
-        """
         if not self.is_configured():
-            return ShotstackResult(
-                success=False,
-                error="Shotstack API key not configured"
-            )
-
+            return ShotstackResult(success=False, error="Shotstack API key not configured")
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.get(
-                    f"{self.base_url}/render/{render_id}",
-                    headers={"x-api-key": self.api_key}
-                )
-
-                if response.status_code != 200:
-                    return ShotstackResult(
-                        success=False,
-                        render_id=render_id,
-                        error=f"API error {response.status_code}: {response.text}"
-                    )
-
-                data = response.json()
-                status = data.get("response", {}).get("status")
-                video_url = data.get("response", {}).get("url")
-
-                logger.info(f"[Shotstack] Render {render_id} status: {status}")
-
-                if status == "done":
-                    return ShotstackResult(
-                        success=True,
-                        render_id=render_id,
-                        status=status,
-                        video_url=video_url
-                    )
-                elif status == "failed":
-                    error = data.get("response", {}).get("error", "Unknown error")
-                    return ShotstackResult(
-                        success=False,
-                        render_id=render_id,
-                        status=status,
-                        error=error
-                    )
-                else:
-                    # Still processing (queued, fetching, rendering, saving)
-                    return ShotstackResult(
-                        success=True,
-                        render_id=render_id,
-                        status=status
-                    )
-
-        except Exception as e:
-            logger.error(f"[Shotstack] Status check error: {e}")
-            return ShotstackResult(
-                success=False,
-                render_id=render_id,
-                error=str(e)
-            )
-
-    async def render_and_wait(
-        self,
-        slides: List[SlideAsset],
-        poll_interval: float = POLL_INTERVAL_SECONDS,
-        max_attempts: int = MAX_POLL_ATTEMPTS
-    ) -> ShotstackResult:
-        """
-        Submit render and wait for completion.
-
-        This is a convenience method that handles the full flow:
-        1. Submit the render
-        2. Poll for status until complete/failed
-        3. Return the final video URL
-
-        Args:
-            slides: List of SlideAsset
-            poll_interval: Seconds between status checks
-            max_attempts: Maximum polling attempts
-
-        Returns:
-            ShotstackResult with video_url if successful
-        """
-        # Submit the render
-        submit_result = await self.submit_render(slides)
-
-        if not submit_result.success or not submit_result.render_id:
-            return submit_result
-
-        render_id = submit_result.render_id
-
-        # Poll for completion
-        for attempt in range(max_attempts):
-            await asyncio.sleep(poll_interval)
-
-            status_result = await self.check_render_status(render_id)
-
-            if status_result.status == "done":
-                logger.info(f"[Shotstack] Render complete: {status_result.video_url}")
-                return status_result
-            elif status_result.status == "failed":
-                logger.error(f"[Shotstack] Render failed: {status_result.error}")
-                return status_result
-
-            # Log progress
-            if attempt % 6 == 0:  # Every 30 seconds
-                logger.info(f"[Shotstack] Still rendering... status={status_result.status}, attempt={attempt+1}/{max_attempts}")
-
-        # Timeout
-        return ShotstackResult(
-            success=False,
-            render_id=render_id,
-            error=f"Render timeout after {max_attempts * poll_interval} seconds"
-        )
+                response = await client.get(f"{self.base_url}/render/{render_id}", headers={"x-api-key": self.api_key})
+        except httpx.HTTPError as e:
+            return ShotstackResult(success=True, render_id=render_id, status="rendering", error=f"poll error; retry: {e}")
+        if response.status_code != 200:
+            return ShotstackResult(success=False, render_id=render_id, error=f"Shotstack error {response.status_code}: {response.text[:300]}")
+        body = response.json().get("response") or {}
+        status = body.get("status")
+        if status == "done":
+            return ShotstackResult(success=True, render_id=render_id, status="done", video_url=body.get("url"))
+        if status == "failed":
+            return ShotstackResult(success=False, render_id=render_id, status="failed", error=body.get("error") or "Render failed")
+        return ShotstackResult(success=True, render_id=render_id, status=status or "rendering")
