@@ -2,7 +2,7 @@
 
 Drop in a research paper PDF, get back a narrated, animated explainer video in the style of 3Blue1Brown.
 
-**Live demo:** _coming back online on Vercel; see `docs/HANDOFF.md`_
+**Live demo:** https://pdf2video-wine.vercel.app
 
 ![CI](https://github.com/rayidali/pdf2video/actions/workflows/ci.yml/badge.svg)
 
