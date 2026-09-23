@@ -27,7 +27,7 @@ r2 = R2Service(
     public_url_base=settings.R2_PUBLIC_URL_BASE,
 )
 shotstack = ShotstackService(api_key=settings.SHOTSTACK_API_KEY, env=settings.SHOTSTACK_ENV)
-store = build_store(settings.DATABASE_URL, settings.sqlite_path)
+store = build_store(settings.database_url, settings.sqlite_path)
 
 
 def service_status() -> dict:
@@ -39,5 +39,5 @@ def service_status() -> dict:
         "r2": r2.is_configured(),
         "shotstack": shotstack.is_configured(),
         "shotstack_env": settings.SHOTSTACK_ENV,
-        "database": "postgres" if settings.DATABASE_URL else "sqlite",
+        "database": "postgres" if settings.database_url else "sqlite",
     }

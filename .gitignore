@@ -13,3 +13,5 @@ media/
 *.db
 .pytest_cache/
 .env.local
+.vercel
+.env*

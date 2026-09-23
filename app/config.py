@@ -42,8 +42,10 @@ class Settings(BaseSettings):
     SHOTSTACK_API_KEY: str = ""
     SHOTSTACK_ENV: str = "stage"
 
-    # Persistence. DATABASE_URL (Postgres) on Vercel; SQLite file locally.
+    # Persistence. Postgres on Vercel (DATABASE_URL from Neon, or POSTGRES_URL from
+    # Supabase-style integrations); SQLite file locally when neither is set.
     DATABASE_URL: str = ""
+    POSTGRES_URL: str = ""
     SQLITE_PATH: str = ""
 
     # Demo protection. If RUN_PASSCODE is set, every POST needs header X-Passcode.
@@ -51,6 +53,10 @@ class Settings(BaseSettings):
     # JSON list of {"title": ..., "url": ...} shown as a gallery on the landing page.
     SAMPLE_VIDEOS: str = "[]"
     MAX_UPLOAD_MB: int = 25
+
+    @property
+    def database_url(self) -> str:
+        return self.DATABASE_URL or self.POSTGRES_URL
 
     @property
     def sqlite_path(self) -> Path:
