@@ -52,7 +52,8 @@ Tiers per slide: 1 = Opus from the visual description, 2 = Opus given the Kodisc
 - [x] 5. Frontend: step driver with resume, passcode gate, sample gallery
 - [x] 6. Tests (pytest, mocked vendors) + GitHub Actions
 - [x] 7a. `vercel.json` (services block), project linked, preview + production deploys green
-- [ ] 7b. Deployment Protection → previews only; Neon terms + `vercel integration add neon`; env vars (see HANDOFF)
+- [x] 7b. Deployment Protection → Standard; Neon Postgres provisioned and verified on Vercel
+- [ ] 7c. API keys via `vercel env add` + redeploy (see HANDOFF)
 - [ ] 8. End-to-end run with real keys; fix what breaks
 - [ ] 9. README rewrite, merge to `main`, put the URL on the resume
 - [ ] later: Kodisc/Shotstack webhooks instead of polling; render 2 slides concurrently; prompt caching

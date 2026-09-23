@@ -15,3 +15,8 @@ media/
 .env.local
 .vercel
 .env*
+
+# Installed by `vercel integration add` (Neon agent skills); not part of the app
+.agents/
+.claude/skills/
+skills-lock.json

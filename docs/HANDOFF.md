@@ -8,18 +8,14 @@ _Last updated: 2026-09-23 by Claude (session 1)._ Update this file whenever a st
 | Code | branch `vercel-migration`, PR #45 → `main` (https://github.com/rayidali/pdf2video/pull/45). Not merged yet. |
 | Vercel project | `rayidalis-projects/pdf2video`, linked to the GitHub repo. Framework preset: Services (FastAPI). |
 | Production URL | **https://pdf2video-wine.vercel.app** (also `pdf2video-rayidalis-projects.vercel.app`). `pdf2video.vercel.app` was taken. |
-| Production state | Deployed and healthy, but **Deployment Protection is on for production**, so visitors get a Vercel login redirect. Fix below. |
+| Production state | **Public and healthy.** Deployment Protection is Standard (previews private, production open). |
 | API keys | **None set yet.** The app boots and shows "Not configured" until they are added. |
-| Database | Not provisioned yet. App falls back to SQLite in `/tmp` (works, but forgets jobs on cold start). |
+| Database | **Neon Postgres provisioned** (`pdf2video-db`, plan `free_v3`) via the Marketplace. `DATABASE_URL` is injected into all environments and verified from Vercel and locally. |
 | Tests | `pytest`: 11 passing. CI workflow in `.github/workflows/ci.yml`. |
 
-## Do these four things to go live (in order)
-1. **Make production public.** Dashboard → https://vercel.com/rayidalis-projects/pdf2video/settings/deployment-protection → Vercel Authentication → choose *Standard Protection* (previews stay private, production is public). Verify with `curl https://pdf2video-wine.vercel.app/health` → `{"status":"healthy"}`.
-2. **Accept the Neon Marketplace terms once** in the browser: https://vercel.com/rayidalis-projects/~/integrations/accept-terms/neon?source=cli . Then run:
-   ```
-   vercel integration add neon --plan free --name pdf2video-db --no-claim
-   ```
-   It creates a free Postgres and injects `DATABASE_URL` into the project.
+## Do these two things to go live (in order)
+~~1. Make production public~~ done 2026-09-23.
+~~2. Neon Postgres~~ done 2026-09-23 (`vercel integration add neon --plan free_v3 --name pdf2video-db --no-claim`; the plan id is `free_v3`, not `free`).
 3. **Add the API keys** (each command prompts for the value; pick `Production` when asked, and also `Preview` if you want branch deploys to work):
    ```
    vercel env add ANTHROPIC_API_KEY
