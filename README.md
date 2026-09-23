@@ -1,124 +1,80 @@
 # Paper to Video
 
-Convert research papers into animated explainer videos suitable for 8th graders.
+Drop in a research paper PDF, get back a narrated, animated explainer video in the style of 3Blue1Brown.
 
-## Overview
+**Live demo:** _coming back online on Vercel; see `docs/HANDOFF.md`_
 
-This application takes a research paper PDF and converts it into an engaging, animated video explanation using:
+![CI](https://github.com/rayidali/pdf2video/actions/workflows/ci.yml/badge.svg)
 
-- **Mistral OCR** for PDF to markdown conversion
-- **Claude AI** for presentation planning and Manim code generation
-- **Manim** for 3blue1brown-style animations
-- **ElevenLabs** for text-to-speech voiceovers
-- **Shotstack** for final video composition
+## How it works
 
-## Setup
-
-1. Create virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+PDF ─▶ Mistral OCR ─▶ Claude Opus 5 ─▶ 11-slide plan (structured output)
+                                            │
+                       for each slide:      ▼
+                       Claude writes a Manim scene ─▶ Kodisc renders it to mp4
+                       ElevenLabs narrates the script ─▶ mp3 on Cloudflare R2
+                                            │
+                                            ▼
+                       Shotstack stitches clips + narration ─▶ final mp4
 ```
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+**Three-tier rendering.** LLM-written animation code fails sometimes. Each slide gets up to three attempts: Claude writes the scene from the plan; if the renderer reports an error, Claude gets the error and fixes the code; if that fails too, a deterministic text slide built from the plan's fallback copy is rendered instead. A video always comes out.
 
-3. Copy `.env.example` to `.env` and fill in your API keys:
-```bash
-cp .env.example .env
-```
+**Serverless-shaped pipeline.** The backend runs as a single FastAPI function on Vercel. Every request does one bounded unit of work and saves its result, so the browser sequences the steps and any job can be resumed by id after a closed tab or a redeploy. Long vendor work is submit-then-poll, never a background task.
 
-4. Run the server:
+## Stack
+
+FastAPI · Pydantic · Anthropic SDK (Opus 5, structured outputs) · Mistral OCR · Kodisc v2 · ElevenLabs · Cloudflare R2 · Shotstack · Postgres (Vercel Marketplace) · vanilla JS
+
+## Run locally
+
 ```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env        # fill in the keys
 uvicorn app.main:app --reload
+open http://localhost:8000
+pytest                       # offline: every vendor is faked
 ```
 
-5. Open http://localhost:8000 in your browser
+Without `DATABASE_URL` the app uses a local SQLite file.
 
-## Deploy to Render
+## Deploy
 
-1. Go to [render.com](https://render.com) and sign up/login
-
-2. Click **New +** → **Web Service**
-
-3. Connect your GitHub repo
-
-4. Configure the service:
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-
-5. Add environment variables in the Render dashboard:
-   - `MISTRAL_API_KEY` - Your Mistral API key
-   - `ANTHROPIC_API_KEY` - Your Anthropic API key
-
-6. Click **Create Web Service**
-
-Your app will be live at `https://your-app-name.onrender.com`
-
-**Render advantages over Vercel:**
-- Longer timeouts (better for OCR processing)
-- Persistent filesystem during instance lifetime
-- Better suited for Python backends
-
-## API Endpoints
-
-- `GET /health` - Health check
-- `POST /api/upload` - Upload a PDF file
-- `POST /api/process/{job_id}` - Process PDF through OCR
-- `GET /api/status/{job_id}` - Get job status
-- `GET /api/markdown/{job_id}` - Get extracted markdown
-
-## Usage
-
-1. Upload a PDF:
 ```bash
-curl -X POST -F "file=@paper.pdf" http://localhost:8000/api/upload
+npm i -g vercel && vercel login
+vercel link                  # creates the project
+vercel env add ANTHROPIC_API_KEY   # repeat for each key in .env.example
+vercel deploy --prod
 ```
 
-2. Process through OCR:
-```bash
-curl -X POST http://localhost:8000/api/process/{job_id}
+Then add a Postgres database from the Vercel dashboard (Storage → Marketplace); it injects `DATABASE_URL`. Set `RUN_PASSCODE` so strangers cannot spend your API credits, and `SAMPLE_VIDEOS` to show finished videos on the landing page.
+
+## API
+
+| Method | Path | Does |
+|---|---|---|
+| POST | `/api/jobs` | upload PDF, run OCR |
+| POST | `/api/jobs/{id}/plan` | Claude writes the slide plan |
+| POST | `/api/jobs/{id}/slides/{n}/render` | Claude writes Manim, Kodisc starts rendering |
+| GET | `/api/jobs/{id}/slides/{n}` | one render status check; escalates tier on failure |
+| POST | `/api/jobs/{id}/voice/{n}` | ElevenLabs narration, uploaded to R2 |
+| POST | `/api/jobs/{id}/assemble` | submit the Shotstack edit |
+| GET | `/api/jobs/{id}/assemble` | one assembly status check |
+| GET | `/api/jobs/{id}` | full job document |
+
+## Project layout
+
+```
+app/main.py          FastAPI entrypoint (Vercel auto-detects it)
+app/routers/jobs.py  the step endpoints
+app/services/        thin vendor clients
+app/store.py         SQLite / Postgres job store
+app/models/          Pydantic schemas (plan + job document)
+static/              frontend
+tests/               pytest with faked vendors
+docs/                handoff notes and migration plan
 ```
 
-3. Check status:
-```bash
-curl http://localhost:8000/api/status/{job_id}
-```
-
-4. Get extracted markdown:
-```bash
-curl http://localhost:8000/api/markdown/{job_id}
-```
-
-## Project Structure
-
-```
-paper-to-video/
-├── app/
-│   ├── __init__.py
-│   ├── main.py                 # FastAPI application
-│   ├── config.py               # Environment variables
-│   ├── models/
-│   │   └── schemas.py          # Pydantic models
-│   ├── services/
-│   │   └── ocr_service.py      # Mistral OCR
-│   ├── agents/                 # (Phase 2+)
-│   ├── prompts/                # (Phase 2+)
-│   └── utils/
-├── static/
-│   ├── index.html              # Frontend UI
-│   ├── style.css               # Styles
-│   └── app.js                  # Frontend JavaScript
-├── tests/
-│   └── test_ocr.py
-├── render.yaml                 # Render deployment config
-├── requirements.txt
-├── .env.example
-└── .gitignore
-```
-
-## License
-
-MIT License
+MIT License.

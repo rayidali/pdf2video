@@ -46,11 +46,11 @@ Tiers per slide: 1 = Opus from the visual description, 2 = Opus given the Kodisc
 ## Steps
 - [x] 0. Understand both branches, verify the v2 fix boots and matches Kodisc's public docs
 - [x] 1. Branch `vercel-migration` off the fix branch; write these docs
-- [ ] 2. `JobStore` (SQLite + Postgres), `Job` schema, config cleanup (no repo-dir writes)
-- [ ] 3. Services: async Anthropic + Opus 5 + structured outputs; Kodisc submit/check split; ElevenLabs real duration; drop ffmpeg; Manim scenes end on last frame
-- [ ] 4. New router with the API above; delete Generative Manim path, sanitizer, dev fixtures
-- [ ] 5. Frontend: step driver with resume, passcode gate, sample gallery
-- [ ] 6. Tests (pytest, mocked vendors) + GitHub Actions
+- [x] 2. `JobStore` (SQLite + Postgres), `Job` schema, config cleanup (no repo-dir writes)
+- [x] 3. Services: async Anthropic + Opus 5 + structured outputs; Kodisc submit/check split; ElevenLabs real duration; drop ffmpeg; Manim scenes end on last frame
+- [x] 4. New router with the API above; delete Generative Manim path, sanitizer, dev fixtures
+- [x] 5. Frontend: step driver with resume, passcode gate, sample gallery
+- [x] 6. Tests (pytest, mocked vendors) + GitHub Actions
 - [ ] 7. `vercel.json`, first deploy, env vars, Marketplace Postgres
 - [ ] 8. End-to-end run with real keys; fix what breaks
 - [ ] 9. README rewrite, merge to `main`, put the URL on the resume

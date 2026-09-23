@@ -9,3 +9,7 @@ venv/
 media/
 *.mp4
 *.mp3
+.vercel/
+*.db
+.pytest_cache/
+.env.local

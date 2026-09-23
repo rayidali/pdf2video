@@ -1,21 +1,14 @@
 """
-Deterministic Manim code template — last-resort fallback.
+Deterministic Manim slide: the last-resort fallback (tier 3).
 
-No LLM in the loop. Given a title + bullet list + colors, returns a
-hardcoded Manim Scene that renders a styled "title + 3 bullets fade-in"
-slide. Uses only Text + FadeIn + arrange — no MathTex, no 3D, no
-randomness, no external assets, nothing that historically breaks Manim
-runtime.
-
-If this template ever fails to render on Kodisc, the cause is on
-Kodisc's side, not the code.
+No LLM. Title plus three bullets, Text + FadeIn only. The scene ends on its final
+composed frame and never fades out, because Shotstack holds the last frame under the
+voiceover; a fade-out would leave a black freeze.
 """
-
 from typing import Iterable
 
 
 def _escape(value: str, max_len: int = 80) -> str:
-    """Escape a string for safe inclusion as a Python string literal body."""
     if not isinstance(value, str):
         value = str(value)
     cleaned = value.replace("\r", " ").replace("\n", " ").strip()
@@ -45,31 +38,13 @@ def render_safe_slide_code(
     colors: dict | None = None,
     duration_seconds: float = 6.0,
 ) -> str:
-    """Return Manim Python source for a guaranteed-rendering bullet slide.
-
-    Args:
-        title: Slide title (will be truncated to fit).
-        bullets: Up to 3 bullet point strings.
-        class_name: Must match Kodisc's `^[A-Za-z_][A-Za-z0-9_]*$`.
-        colors: Optional dict with primary/secondary/background/text hex strings.
-        duration_seconds: Approximate target duration (controls trailing wait).
-    """
-    palette = {
-        "primary": "#58C4DD",
-        "secondary": "#FC6255",
-        "background": "#000000",
-        "text": "#FFFFFF",
-    }
+    palette = {"primary": "#58C4DD", "secondary": "#FC6255", "background": "#000000", "text": "#FFFFFF"}
     if colors:
         palette.update({k: v for k, v in colors.items() if v})
 
     title_safe = _escape(title or "Slide", max_len=60)
-    b1, b2, b3 = _normalize_bullets(bullets, desired=3)
-    b1_safe = _escape(b1, max_len=70)
-    b2_safe = _escape(b2, max_len=70)
-    b3_safe = _escape(b3, max_len=70)
-
-    end_wait = max(1.5, float(duration_seconds) - 4.5)
+    b1, b2, b3 = (_escape(b, max_len=70) for b in _normalize_bullets(bullets, desired=3))
+    end_wait = max(1.5, min(float(duration_seconds), 12.0) - 3.0)
 
     return f'''from manim import *
 
@@ -88,9 +63,9 @@ class {class_name}(Scene):
         self.play(FadeIn(title, shift=DOWN * 0.3), run_time=0.6)
         self.wait(0.3)
 
-        line1 = Text("• {b1_safe}", color="{palette["text"]}", font_size=34)
-        line2 = Text("• {b2_safe}", color="{palette["text"]}", font_size=34)
-        line3 = Text("• {b3_safe}", color="{palette["text"]}", font_size=34)
+        line1 = Text("• {b1}", color="{palette["text"]}", font_size=34)
+        line2 = Text("• {b2}", color="{palette["text"]}", font_size=34)
+        line3 = Text("• {b3}", color="{palette["text"]}", font_size=34)
 
         bullets_group = VGroup(line1, line2, line3).arrange(
             DOWN, aligned_edge=LEFT, buff=0.55
@@ -103,6 +78,4 @@ class {class_name}(Scene):
         self.wait(0.4)
         self.play(FadeIn(line3, shift=RIGHT * 0.2), run_time=0.5)
         self.wait({end_wait:.2f})
-
-        self.play(FadeOut(VGroup(title, bullets_group)), run_time=0.6)
 '''
